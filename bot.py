@@ -25,10 +25,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # ================= КОНСТАНТЫ =================
-AI_CONVEYOR_CHANNEL_ID = 1509333979713769612  # Канал для запуска конвейера задач
-TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531  # Категория для активных тикетов
-TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167  # Категория для закрытых тикетов
-TICKET_CHANNEL_ID = 1500242313211805788  # Канал с кнопкой создания тикета
+AI_CONVEYOR_CHANNEL_ID = 1509333979713769612
+TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531
+TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
+TICKET_CHANNEL_ID = 1500242313211805788
 BACKUP_CHANNEL_ID = 1503146387129368718
 
 # ================= КОНФИГУРАЦИЯ =================
@@ -144,10 +144,9 @@ async def mute_member(member: discord.Member, duration_seconds: int, reason: str
         return False
 
 def get_mute_duration(user_id: int) -> int:
-    # ИСПРАВЛЕНО: индекс ограничен длиной списка, отсчёт с 0
     offense_count = user_mention_count.get(user_id, 1)
-    index = min(offense_count - 1, len(MUTE_DURATIONS) - 1)
-    return MUTE_DURATIONS[max(index, 0)]
+    index = max(0, min(offense_count - 1, len(MUTE_DURATIONS) - 1))
+    return MUTE_DURATIONS[index]
 
 # ================= КУРС ВАЛЮТ =================
 async def fetch_currency_rates():
@@ -284,7 +283,6 @@ class TicketControlView(discord.ui.View):
         self.channel_id = channel_id
         self.user_id = user_id
 
-    # ИСПРАВЛЕНО: custom_id должен быть статическим для persistent view
     @discord.ui.button(label="🔒 Закрыть тикет", style=discord.ButtonStyle.danger, custom_id="close_ticket_btn")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id and not is_admin_member(interaction.user):
@@ -322,6 +320,20 @@ class TicketCreateButton(discord.ui.View):
         await interaction.response.send_modal(TicketModal())
 
 # ================= МАГАЗИН =================
+async def _fetch_channel_safe(channel_id: int, retries: int = 3) -> Optional[discord.TextChannel]:
+    for attempt in range(retries):
+        ch = bot.get_channel(channel_id)
+        if ch:
+            return ch
+        try:
+            ch = await bot.fetch_channel(channel_id)
+            if ch:
+                return ch
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+    return None
+
 async def _do_shop_update(guild: discord.Guild):
     config = get_config(guild.id)
     if not config or not config.get("shop_channel"):
@@ -479,7 +491,7 @@ class ShopView(discord.ui.View):
         except Exception as e:
             logger.exception("Ошибка category_callback")
             try:
-                await interaction.followup.send("❌ Ошибка при открыть категорию", ephemeral=True)
+                await interaction.followup.send("❌ Ошибка при открытии категории", ephemeral=True)
             except Exception:
                 pass
 
@@ -675,7 +687,6 @@ class LotActionView(discord.ui.View):
                 revenue = int(price_num) if price_num else 0
                 await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=revenue)
 
-                # ИСПРАВЛЕНО: вынесен отдельный класс вместо вложенной функции
                 ticket_view = OrderCloseView(
                     ticket_channel_id=ticket_channel.id,
                     buyer_id=interaction.user.id,
@@ -706,7 +717,6 @@ class LotActionView(discord.ui.View):
             pass
 
 
-# ИСПРАВЛЕНО: вынесен из вложенной функции в отдельный класс View
 class OrderCloseView(discord.ui.View):
     def __init__(self, ticket_channel_id: int, buyer_id: int, seller, voice_channel_id: Optional[int] = None):
         super().__init__(timeout=None)
@@ -978,15 +988,6 @@ async def cleanup_spam_cache():
             user_mention_last_reset.pop(uid, None)
 
 # ================= ОТПРАВКА ПАНЕЛЕЙ =================
-async def _fetch_channel_safe(channel_id: int) -> Optional[discord.TextChannel]:
-    ch = bot.get_channel(channel_id)
-    if ch:
-        return ch
-    try:
-        return await bot.fetch_channel(channel_id)
-    except Exception:
-        return None
-
 async def _send_verify_panel(guild_config: dict):
     channel_id = guild_config.get("verify_channel")
     if not channel_id:
@@ -1108,6 +1109,9 @@ async def _assign_unverified_roles():
                     pass
 
 async def setup_panels():
+    # Принудительно обновляем кэш перед отправкой панелей
+    await db.refresh_cache()
+    
     for guild_id, g_config in CONFIG.items():
         guild = bot.get_guild(guild_id)
         if not guild:
@@ -1115,37 +1119,41 @@ async def setup_panels():
             continue
 
         logger.info(f"⏳ Настройка панелей для {g_config['name']}...")
+        
+        # Небольшая задержка между отправками
+        await asyncio.sleep(2)
+        
         try:
             await _send_verify_panel(g_config)
             logger.info(f"  ✅ Верификация — {g_config['name']}")
-        except Exception:
-            logger.exception(f"  ❌ Ошибка верификации — {g_config['name']}")
+        except Exception as e:
+            logger.exception(f"  ❌ Ошибка верификации — {g_config['name']}: {e}")
 
         try:
             await _send_ticket_panel_from_config(g_config)
             logger.info(f"  ✅ Тикеты — {g_config['name']}")
-        except Exception:
-            logger.exception(f"  ❌ Ошибка тикетов — {g_config['name']}")
+        except Exception as e:
+            logger.exception(f"  ❌ Ошибка тикетов — {g_config['name']}: {e}")
 
         if g_config.get("shop_channel"):
             try:
                 await send_or_update_shop(guild)
                 logger.info(f"  ✅ Магазин — {g_config['name']}")
-            except Exception:
-                logger.exception(f"  ❌ Ошибка магазина — {g_config['name']}")
+            except Exception as e:
+                logger.exception(f"  ❌ Ошибка магазина — {g_config['name']}: {e}")
 
         if g_config.get("status_channel"):
             try:
                 await _send_status_channel_panel(guild, g_config)
                 logger.info(f"  ✅ Статус — {g_config['name']}")
-            except Exception:
-                logger.exception(f"  ❌ Ошибка статуса — {g_config['name']}")
+            except Exception as e:
+                logger.exception(f"  ❌ Ошибка статуса — {g_config['name']}: {e}")
 
     try:
         await _assign_unverified_roles()
         logger.info("✅ Роли unverified назначены")
-    except Exception:
-        logger.exception("❌ Ошибка назначения ролей unverified")
+    except Exception as e:
+        logger.exception(f"❌ Ошибка назначения ролей unverified: {e}")
 
 # ================= БЛОК ИНТЕГРАЦИИ НЕЙРОСЕТЕЙ (GEMINI SDK) =================
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -1153,7 +1161,6 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_KEY:
     logger.warning("⚠️ ВНИМАНИЕ: Переменная окружения GEMINI_API_KEY не найдена на хостинге!")
 
-# Один клиент на весь процесс (thread-safe, переиспользуется)
 _gemini_client: Optional[genai.Client] = None
 
 def get_gemini_client() -> Optional[genai.Client]:
@@ -1167,7 +1174,6 @@ def get_gemini_client() -> Optional[genai.Client]:
 MODEL = "gemini-2.5-flash"
 
 async def ask_gemini_analyst(user_task: str) -> str:
-    """Шаг 1: Gemini превращает описание задачи в технический промт для кодера."""
     client = get_gemini_client()
     if not client:
         return "Ошибка: Не задан GEMINI_API_KEY на хостинге"
@@ -1180,36 +1186,29 @@ async def ask_gemini_analyst(user_task: str) -> str:
             model=MODEL,
             contents=prompt,
         )
-        return response.text
-    except Exception as e:
+        return response.text    except Exception as e:
         logger.exception("Ошибка на этапе Аналитика Gemini")
         return f"Ошибка Gemini API (Аналитик): {e}"
 
-async def ask_gemini_coder(prompt: str, history: list = None) -> str:
-    """Шаг 2 и 4: Gemini пишет код и вносит правки по результатам ревью.
-    
-    history — список dict'ов формата:
-        {"role": "user"|"model", "parts": [{"text": "..."}]}
-    Если передана история, последний элемент считается новым сообщением пользователя.
-    """
+async def ask_gemini_coder(prompt: str, history: list = None, model_override: str = None) -> str:
     client = get_gemini_client()
     if not client:
         return "Ошибка: Не задан GEMINI_API_KEY на хостинге"
     try:
+        model = model_override or MODEL
         if history:
-            # Собираем contents из всей истории, включая последнее сообщение
             contents = []
             for msg in history:
                 role = "user" if msg["role"] == "user" else "model"
                 text = msg["parts"][0]["text"] if "parts" in msg else msg.get("content", "")
                 contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=text)]))
             response = await client.aio.models.generate_content(
-                model=MODEL,
+                model=model,
                 contents=contents,
             )
         else:
             response = await client.aio.models.generate_content(
-                model=MODEL,
+                model=model,
                 contents=prompt,
             )
         return response.text
@@ -1218,7 +1217,6 @@ async def ask_gemini_coder(prompt: str, history: list = None) -> str:
         return f"Ошибка Gemini API (Кодер): {e}"
 
 async def ask_gemini_reviewer(code: str) -> str:
-    """Шаг 3: Отдельный вызов Gemini в роли строгого ревьюера кода."""
     client = get_gemini_client()
     if not client:
         return "Ошибка: Не задан GEMINI_API_KEY на хостинге"
@@ -1241,8 +1239,6 @@ async def ask_gemini_reviewer(code: str) -> str:
 
 # ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДОСТАВКИ РЕЗУЛЬТАТА =================
 async def send_smart_result(user: discord.User, text: str, fname: str, user_choice: str):
-    """Безопасная доставка результата: ЛС с текстом или файлом."""
-    # Если пользователь хочет чистый текст в ЛС и он влезает в лимит
     if ("текст" in user_choice or "text" in user_choice) and len(text) <= 1900:
         try:
             await user.send(f"✅ **Ваш готовый результат (Формат: Текст в ЛС):**\n{text}")
@@ -1250,7 +1246,6 @@ async def send_smart_result(user: discord.User, text: str, fname: str, user_choi
         except discord.Forbidden:
             pass
 
-    # Если текст небольшой — отправляем блоком кода прямо в ЛС
     if len(text) <= 1900:
         try:
             await user.send(f"✅ **Ваш готовый результат (`{fname}`):**\n```\n{text[:1850]}\n```")
@@ -1258,7 +1253,6 @@ async def send_smart_result(user: discord.User, text: str, fname: str, user_choi
         except discord.Forbidden:
             pass
 
-    # Иначе — отправляем файлом
     try:
         file_bytes = text.encode('utf-8')
         file_obj = io.BytesIO(file_bytes)
@@ -1276,33 +1270,27 @@ async def send_smart_result(user: discord.User, text: str, fname: str, user_choi
 
 
 # ================= НАСТРОЙКИ, БЕЗОПАСНОСТЬ И МОДЕЛИ ИИ =================
-# Разделение моделей для экономии и качества pipeline
-MODEL_ANALYST = "gemini-2.5-flash"   # Быстрый сборщик ТЗ
-MODEL_REVIEWER = "gemini-2.5-pro"    # Глубокий ревьюер кода
-MODEL_FINALIZER = "gemini-2.5-pro"   # Высококлассный кодер
+MODEL_ANALYST = "gemini-2.5-flash"
+MODEL_REVIEWER = "gemini-2.5-pro"
+MODEL_FINALIZER = "gemini-2.5-pro"
 
-# Настройка лимитов на запросы ИИ (Rate Limits)
 ai_cooldowns = {}
 
-# Базовый Sandboxing (Фильтрация опасных генераций/запросов)
 BANNED_CODE_PATTERNS = [
-    r"discord\.tokens", r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}", # Токены
-    r"as_selfbot", r"selfbot",                             # Селфботы
-    r"nuke_guild", r"delete_channels",                     # Нукеры
-    r"browser_cookie3", r"roblox_py",                      # Стилеры
+    r"discord\.tokens", r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}",
+    r"as_selfbot", r"selfbot",
+    r"nuke_guild", r"delete_channels",
+    r"browser_cookie3", r"roblox_py",
     r"token_grabber", r"malware"
 ]
 
 def is_code_dangerous(text: str) -> bool:
-    """Проверяет входящий/исходящий текст на критические уязвимости."""
     for pattern in BANNED_CODE_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             return True
     return False
 
-# Урезание контекста гильдии до минимума (Экономия токенов)
 def get_minimal_guild_context(guild: discord.Guild) -> str:
-    """Возвращает сжатые метаданные сервера вместо передачи всех объектов."""
     if not guild:
         return "Контекст сервера недоступен."
     
@@ -1337,13 +1325,11 @@ class AIJobRequest:
         self.future = asyncio.get_running_loop().create_future()
 
 async def execute_queued_ai(model_name: str, prompt: str, history: list = None) -> str:
-    """Помещает задачу в очередь и асинхронно ожидает ответа от воркера."""
     job = AIJobRequest(model_name, prompt, history)
     await ai_queue.put(job)
     return await job.future
 
 async def ai_worker():
-    """Фоновый обработчик очереди, защищающий API от перегрузок (429) и лагов бота."""
     logger.info("🤖 Асинхронный ИИ-воркер успешно запущен.")
     while True:
         job: AIJobRequest = await ai_queue.get()
@@ -1398,14 +1384,12 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
         user_goal = self.goal_input.value or "Готовый и рабочий код"
         user_format = (self.format_input.value or "py").strip().lower()
 
-        # 1. Применяем Sandboxing-фильтр
         if is_code_dangerous(user_text) or is_code_dangerous(user_goal):
             return await interaction.response.send_message(
                 "❌ **Запрос отклонен системой безопасности:** Обнаружены опасные паттерны кода (селфботы, нукеры, grabbers).",
                 ephemeral=True
             )
 
-        # 2. Применяем Rate Limits
         now = datetime.now()
         u_id = interaction.user.id
         if u_id in ai_cooldowns:
@@ -1417,7 +1401,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 )
         ai_cooldowns[u_id] = now
 
-        # Инициализируем отложенный ответ (defer)
         await interaction.response.defer(ephemeral=True)
         
         embed = discord.Embed(
@@ -1428,7 +1411,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
         status_msg = await interaction.followup.send(embed=embed, ephemeral=True)
 
         try:
-            # Оптимизируем и сжимаем контекст
             if interaction.guild:
                 server_context = get_minimal_guild_context(interaction.guild)
             else:
@@ -1443,7 +1425,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 f"Сделай упор на цель пользователя ({user_goal}). Если цель связана с оформлением текста — удели внимание структуре сообщений и эмбедам. Если цель 'Код' — сделай упор на чистую архитектуру. Создай идеальный промт для Кодера."
             )
 
-            # Шаг 1: Аналитик генерирует ТЗ через Безопасную Очередь (Модель Flash)
             gemini_prompt = await execute_queued_ai(MODEL_ANALYST, full_analyst_task)
             if gemini_prompt.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
@@ -1455,7 +1436,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
             embed.description = "⏳ **Шаг 2/4:** ТЗ сформировано. Gemini Pro создает архитектуру решения..."
             await status_msg.edit(embed=embed)
 
-            # Шаг 2: Кодер пишет первичное решение через Очередь (Модель Pro)
             initial_code = await execute_queued_ai(MODEL_FINALIZER, f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}")
             if initial_code.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
@@ -1467,7 +1447,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
             embed.description = "⏳ **Шаг 3/4:** Первичный код готов. Запуск глубокого ИИ-Ревьюера..."
             await status_msg.edit(embed=embed)
 
-            # Шаг 3: Передаем расширенную информацию Ревьюеру
             full_reviewer_prompt = (
                 f"Вы выступаете в роли Senior Code Reviewer. Оцените предоставленный код.\n\n"
                 f"📋 ЗАДАЧА ПОЛЬЗОВАТЕЛЯ:\n{user_text}\n"
@@ -1487,7 +1466,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
             embed.description = "⏳ **Шаг 4/4:** Отчет ревьюера обработан. Финальная сборка и полировка архитектуры..."
             await status_msg.edit(embed=embed)
 
-            # Шаг 4: Кодер вносит правки и выдаёт финальный результат через Очередь (Модель Pro)
             history = [
                 {"role": "user", "parts": [{"text": f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}"}]},
                 {"role": "model", "parts": [{"text": initial_code}]},
@@ -1502,7 +1480,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 await status_msg.edit(embed=embed)
                 return
 
-            # Определяем расширение файла
             if "py" in user_format:
                 filename = "script.py"
             elif "txt" in user_format:
@@ -1510,14 +1487,12 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
             else:
                 filename = "output.txt"
 
-            # Пытаемся отправить результат в ЛС
             delivered = await send_smart_result(interaction.user, final_result, filename, user_format)
 
             embed.title = "✅ ИИ-Конвейер: Готово!"
             if delivered:
                 embed.description = f"Результат успешно отправлен в **личные сообщения**!\n\n📄 Файл: `{filename}`\n🎯 Цель: {user_goal}"
             else:
-                # Если ЛС закрыты — отправляем файлом прямо в ответ
                 embed.description = f"Не удалось отправить в ЛС (закрыты). Результат прикреплен ниже."
                 embed.color = discord.Color.orange()
                 await status_msg.edit(embed=embed)
@@ -1558,7 +1533,6 @@ class TaskView(discord.ui.View):
 
 
 async def setup_ai_panel():
-    """Отправляет обновленную панель запуска ИИ-конвейера в нужный канал."""
     channel = await _fetch_channel_safe(AI_CONVEYOR_CHANNEL_ID)
     if not channel:
         logger.warning(f"⚠️ Канал ИИ-конвейера {AI_CONVEYOR_CHANNEL_ID} не найден")
@@ -1596,7 +1570,6 @@ async def setup_ai_panel():
 
 
 async def _safe_task(coro, name: str):
-    """Обёртка для asyncio.create_task — логирует необработанные исключения."""
     try:
         await coro
     except Exception:
@@ -1604,115 +1577,79 @@ async def _safe_task(coro, name: str):
 
 
 async def _startup_background():
-    """Все тяжёлые задачи старта выполняются последовательно."""
-    print("🔥 _startup_background() начал работу...")
     logger.info("🔥 _startup_background() начал работу...")
     
-    # Инициализация и автозапуск фонового воркера для обработки очереди ИИ
     global _ai_worker_task
     if '_ai_worker_task' not in globals() or _ai_worker_task.done():
         _ai_worker_task = bot.loop.create_task(ai_worker())
         logger.info("✅ Асинхронная ИИ-очередь успешно запущена в фоне.")
-        print("✅ Асинхронная ИИ-очередь успешно запущена в фоне.")
 
-    # 1. Синхронизация slash-команд
-    print("⏳ Синхронизация slash-команд...")
     try:
         await bot.tree.sync()
         logger.info("✅ Слеш-команды синхронизированы")
-        print("✅ Слеш-команды синхронизированы")
     except Exception as e:
         logger.exception("❌ Ошибка синхронизации команд")
-        print(f"❌ Ошибка синхронизации команд: {e}")
 
-    # 2. Восстановление бэкапа магазина
-    print("⏳ Восстановление бэкапа магазина...")
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
         logger.info("✅ Восстановление из бэкапа завершено")
-        print("✅ Восстановление из бэкапа завершено")
     except Exception as e:
         logger.exception("❌ Ошибка восстановления бэкапа")
-        print(f"❌ Ошибка восстановления бэкапа: {e}")
 
-    # 3. Панели серверов (верификация, тикеты, магазин, статус)
-    print("⏳ Настройка панелей серверов...")
-    logger.info("⏳ Настройка панелей серверов...")
     try:
         await setup_panels()
         logger.info("✅ Панели серверов настроены")
-        print("✅ Панели серверов настроены")
     except Exception as e:
         logger.exception("❌ Ошибка настройки панелей серверов")
-        print(f"❌ Ошибка настройки панелей серверов: {e}")
 
-    # 4. Панель ИИ-конвейера
-    print("⏳ Настройка панели ИИ-конвейера...")
-    logger.info("⏳ Настройка панели ИИ-конвейера...")
     try:
         await setup_ai_panel()
         logger.info("✅ Панель ИИ-конвейера настроена")
-        print("✅ Панель ИИ-конвейера настроена")
     except Exception as e:
         logger.exception("❌ Ошибка настройки панели ИИ-конвейера")
-        print(f"❌ Ошибка настройки панели ИИ-конвейера: {e}")
     
-    print("✅ _startup_background() завершён!")
     logger.info("✅ _startup_background() завершён!")
 
 
 # ================= СОБЫТИЯ =================
 @bot.event
 async def on_ready():
-    print(f"🔥 on_ready() вызван! Бот: {bot.user}")
     logger.info(f"🔥 on_ready() вызван! Бот: {bot.user}")
     
     global _startup_done
     if _startup_done:
         logger.info(f"♻️ Reconnect (RESUME): {bot.user}")
-        print(f"♻️ Reconnect (RESUME): {bot.user}")
         return
     _startup_done = True
 
-    # БД инициализируется первой — всё остальное от неё зависит
-    print("⏳ Инициализация БД...")
     try:
         await db.init_db()
         await db.refresh_cache()
         logger.info("✅ БД инициализирована, кэш загружен")
-        print("✅ БД инициализирована, кэш загружен")
     except Exception as e:
         logger.exception("❌ КРИТИЧЕСКАЯ ОШИБКА инициализации БД")
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА инициализации БД: {e}")
         return
 
-    # Persistent Views — ShopView намеренно исключён (динамические custom_id)
-    print("⏳ Регистрация Persistent Views...")
     try:
         bot.add_view(VerifyView())
         bot.add_view(TicketCreateButton())
         bot.add_view(TaskView())
         bot.add_view(OrderCloseView(0, 0, None, None))
         logger.info("✅ Persistent Views зарегистрированы")
-        print("✅ Persistent Views зарегистрированы")
     except Exception as e:
         logger.exception("❌ Ошибка регистрации Persistent Views")
-        print(f"❌ Ошибка регистрации Persistent Views: {e}")
 
-    # Фоновые задачи — каждая обёрнута в _safe_task для логирования ошибок
-    print("⏳ Запуск фоновых задач...")
     asyncio.create_task(_safe_task(auto_cleanup_tickets(), "auto_cleanup_tickets"))
     asyncio.create_task(_safe_task(auto_update_currency(), "auto_update_currency"))
     asyncio.create_task(_safe_task(cleanup_spam_cache(), "cleanup_spam_cache"))
     logger.info("✅ Фоновые задачи запущены")
-    print("✅ Фоновые задачи запущены")
 
-    # Всё тяжёлое — в одной последовательной задаче
-    print("⏳ Запуск _startup_background()...")
+    # Ждём 5 секунд чтобы бот полностью подключился к Gateway
+    await asyncio.sleep(5)
+    
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
 
     logger.info(f"✅ Бот готов: {bot.user}")
-    print(f"✅ Бот готов: {bot.user}")
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -1759,7 +1696,6 @@ async def on_message(message: discord.Message):
         user_id = message.author.id
         now = datetime.now()
         if user_id in user_mention_last_reset:
-            # ИСПРАВЛЕНО: используем total_seconds() вместо .seconds
             if (now - user_mention_last_reset[user_id]).total_seconds() > 60:
                 user_mention_count[user_id] = 1
             else:

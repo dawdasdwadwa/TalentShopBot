@@ -175,6 +175,8 @@ async def ask_groq_with_retry(
             return f"Ошибка Groq API: {error_msg[:200]}"
     return "Ошибка: Все ключи исчерпали лимиты"
 
+import re
+
 async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = None) -> str:
     model = MODE_MODELS.get(mode, MODEL_CODING)
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["coding"])
@@ -185,7 +187,14 @@ async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = 
     messages.append({"role": "user", "content": prompt})
     
     temperature = 0.4 if mode in ["content", "design", "advice"] else 0.2
-    return await ask_groq_with_retry(model, messages, temperature=temperature)
+    response = await ask_groq_with_retry(model, messages, temperature=temperature)
+    
+    # 🔥 Удаляем блок <think>...</think>
+    response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+    response = re.sub(r'\n{3,}', '\n\n', response)  # Убираем лишние переносы
+    response = response.strip()
+    
+    return response
 
 # ================= КОНФИГУРАЦИЯ =================
 CONFIG = {
@@ -1340,9 +1349,18 @@ class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
             max_length=50,
             required=False
         )
+        self.show_think = discord.ui.Select(
+            placeholder="🧠 Показывать рассуждения ИИ?",
+            options=[
+                discord.SelectOption(label="❌ Скрыть (по умолчанию)", value="hide", description="Только чистый ответ", emoji="🙈"),
+                discord.SelectOption(label="✅ Показать (для экспертов)", value="show", description="Показать ход мыслей модели", emoji="🧠"),
+            ],
+            row=3
+        )
         
         self.add_item(self.task_input)
         self.add_item(self.format_input)
+        self.add_item(self.show_think)
     
     async def on_submit(self, interaction: discord.Interaction):
         user_query = self.task_input.value

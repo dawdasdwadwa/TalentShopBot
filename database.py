@@ -440,11 +440,23 @@ async def get_all_categories() -> Dict[int, Category]:
     global categories_cache
     if categories_cache:
         return categories_cache
-    async with transaction(read_only=True):
-        rows = await _execute_no_lock('SELECT * FROM categories ORDER BY id')
-        cat_rows = await rows.fetchall()
-        lots_rows = await _execute_no_lock('SELECT id, category_id FROM lots')
-        lot_rows = await lots_rows.fetchall()
+    print("  ⏳ get_all_categories(): entering transaction...")
+    try:
+        async with transaction(read_only=True):
+            print("    ⏳ get_all_categories(): executing SELECT categories...")
+            rows = await _execute_no_lock('SELECT * FROM categories ORDER BY id')
+            print("    ⏳ get_all_categories(): fetched cursor for categories, now fetching all rows...")
+            cat_rows = await rows.fetchall()
+            print(f"    ✅ get_all_categories(): categories rows count: {len(cat_rows)}")
+            print("    ⏳ get_all_categories(): executing SELECT id, category_id FROM lots...")
+            lots_rows = await _execute_no_lock('SELECT id, category_id FROM lots')
+            print("    ⏳ get_all_categories(): fetched cursor for lots, now fetching all rows...")
+            lot_rows = await lots_rows.fetchall()
+            print(f"    ✅ get_all_categories(): lots rows count: {len(lot_rows)}")
+    except Exception as e:
+        print(f"❌ get_all_categories() error: {e}")
+        logger.exception("❌ get_all_categories() error")
+        return {}
     lots_by_category = {}
     for row in lot_rows:
         cat_id = row['category_id']
@@ -460,6 +472,7 @@ async def get_all_categories() -> Dict[int, Category]:
         for row in cat_rows
     }
     categories_cache = result
+    print(f"  ✅ get_all_categories(): returning {len(result)} categories")
     return result
 
 async def get_category(category_id: int) -> Optional[Category]:

@@ -1,5 +1,3 @@
-import google.genai as genai
-from google.genai import types as genai_types
 import discord
 from discord.ui import TextInput, Modal
 from discord.ext import commands, tasks

@@ -136,17 +136,31 @@ async def transaction(read_only: bool = False):
     token = None
     sp_name = None
     if is_root:
-        await _transaction_lock.acquire()
+        print(f"⏳ transaction(): acquiring _transaction_lock... (read_only={read_only})")
+        try:
+            # Используем wait_for с таймаутом чтобы избежать зависания
+            await asyncio.wait_for(_transaction_lock.acquire(), timeout=5.0)
+            print(f"✅ transaction(): _transaction_lock acquired")
+        except asyncio.TimeoutError:
+            print(f"❌ transaction(): _transaction_lock TIMEOUT - lock захвачена другим потоком!")
+            logger.error("❌ transaction(): _transaction_lock TIMEOUT")
+            raise
         # _db_lock не нужен: _transaction_lock уже гарантирует
         # что только одна транзакция активна в момент времени
         _transaction_owner.set(True)
         if read_only:
+            print("⏳ transaction(): executing BEGIN DEFERRED...")
             await db.execute("BEGIN DEFERRED")
+            print("✅ transaction(): BEGIN DEFERRED executed")
         else:
+            print("⏳ transaction(): executing BEGIN IMMEDIATE...")
             await db.execute("BEGIN IMMEDIATE")
+            print("✅ transaction(): BEGIN IMMEDIATE executed")
     else:
         sp_name = f"sp_{depth}_{uuid.uuid4().hex}"
+        print(f"⏳ transaction(): creating savepoint {sp_name}...")
         await db.execute(f"SAVEPOINT {sp_name}")
+        print(f"✅ transaction(): savepoint {sp_name} created")
     token = _transaction_depth.set(depth + 1)
     try:
         yield
@@ -154,25 +168,36 @@ async def transaction(read_only: bool = False):
         # BEGIN IMMEDIATE уже владеет эксклюзивным доступом SQLite,
         # а повторный lock вызовет deadlock (asyncio.Lock не реентерабельный)
         if is_root:
+            print("⏳ transaction(): committing...")
             await db.commit()
+            print("✅ transaction(): committed")
         else:
+            print(f"⏳ transaction(): releasing savepoint {sp_name}...")
             await db.execute(f"RELEASE SAVEPOINT {sp_name}")
-    except Exception:
+            print(f"✅ transaction(): savepoint {sp_name} released")
+    except Exception as e:
+        print(f"❌ transaction(): exception occurred: {e}")
         try:
             if is_root:
+                print("⏳ transaction(): rolling back...")
                 await db.rollback()
+                print("✅ transaction(): rolled back")
             else:
+                print(f"⏳ transaction(): rolling back to savepoint {sp_name}...")
                 await db.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
                 await db.execute(f"RELEASE SAVEPOINT {sp_name}")
-        except Exception:
-            pass
+                print(f"✅ transaction(): rolled back savepoint {sp_name}")
+        except Exception as e2:
+            print(f"❌ transaction(): rollback error: {e2}")
         raise
     finally:
         if token:
             _transaction_depth.reset(token)
         if is_root and _transaction_owner.get():
             _transaction_owner.set(False)
+            print("⏳ transaction(): releasing _transaction_lock...")
             _transaction_lock.release()
+            print("✅ transaction(): _transaction_lock released")
 
 # ================= RECONNECT PROTECTION =================
 async def ensure_db():

@@ -102,7 +102,27 @@ SYSTEM_PROMPTS = {
     ),
 }
 
-# Хранилище историй диалогов (по user_id и режиму)
+MODE_NAMES = {
+    "coding": "💻 Кодинг",
+    "advice": "📋 Советы по развитию",
+    "design": "🎨 Оформление и дизайн",
+    "analytics": "📊 Аналитика сервера",
+    "content": "📝 Контент и тексты",
+    "marketing": "🛒 Маркетинг и продажи",
+    "features": "🤖 Идеи для бота",
+}
+
+MODE_MODELS = {
+    "coding": MODEL_CODING,
+    "advice": MODEL_CREATIVE,
+    "design": MODEL_CREATIVE,
+    "analytics": MODEL_CODING,
+    "content": MODEL_CREATIVE,
+    "marketing": MODEL_CODING,
+    "features": MODEL_CODING,
+}
+
+# Хранилище историй диалогов
 conversation_histories: Dict[str, List[Dict[str, str]]] = {}
 
 def get_history_key(user_id: int, mode: str) -> str:
@@ -112,14 +132,14 @@ def add_to_history(user_id: int, mode: str, role: str, content: str):
     key = get_history_key(user_id, mode)
     if key not in conversation_histories:
         conversation_histories[key] = []
-    conversation_histories[key].append({"role": role, "content": content})
-    # Ограничиваем историю 10 сообщениями (5 пар вопрос-ответ)
+    conversation_histories[key].append({"role": role, "content": content[:1000]})
     if len(conversation_histories[key]) > 10:
         conversation_histories[key] = conversation_histories[key][-10:]
 
-def get_history(user_id: int, mode: str) -> List[Dict[str, str]]:
+def get_history_messages(user_id: int, mode: str) -> List[Dict[str, str]]:
     key = get_history_key(user_id, mode)
-    return conversation_histories.get(key, [])
+    history = conversation_histories.get(key, [])
+    return [{"role": msg["role"], "content": msg["content"]} for msg in history]
 
 def clear_history(user_id: int, mode: str):
     key = get_history_key(user_id, mode)
@@ -133,7 +153,6 @@ async def ask_groq_with_retry(
     max_retries: int = 4,
     temperature: float = 0.2
 ) -> str:
-    """Пытается выполнить запрос, переключая ключи при ошибке"""
     for attempt in range(max_retries):
         client = get_next_groq_client()
         if not client:
@@ -156,89 +175,17 @@ async def ask_groq_with_retry(
             return f"Ошибка Groq API: {error_msg[:200]}"
     return "Ошибка: Все ключи исчерпали лимиты"
 
-async def ask_groq_coding(prompt: str, history: list = None) -> str:
-    """Режим Кодинг — Llama 3.3"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["coding"]}]
+async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = None) -> str:
+    model = MODE_MODELS.get(mode, MODEL_CODING)
+    system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["coding"])
+    
+    messages = [{"role": "system", "content": system_prompt}]
     if history:
         messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.2)
-
-async def ask_groq_advice(prompt: str, history: list = None) -> str:
-    """Режим Советы — Qwen"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["advice"]}]
-    if history:
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CREATIVE, messages, temperature=0.3)
-
-async def ask_groq_design(prompt: str, history: list = None) -> str:
-    """Режим Оформление — Qwen"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["design"]}]
-    if history:
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CREATIVE, messages, temperature=0.3)
-
-async def ask_groq_analytics(prompt: str, history: list = None) -> str:
-    """Режим Аналитика — Llama 3.3"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["analytics"]}]
-    if history:
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.2)
-
-async def ask_groq_content(prompt: str, history: list = None) -> str:
-    """Режим Контент — Qwen"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["content"]}]
-    if history:
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CREATIVE, messages, temperature=0.4)
-
-async def ask_groq_marketing(prompt: str, history: list = None) -> str:
-    """Режим Маркетинг — Llama 3.3"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["marketing"]}]
-    if history:
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.3)
-
-async def ask_groq_features(prompt: str, history: list = None) -> str:
-    """Режим Бот-фичи — Llama 3.3"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPTS["features"]}]
-    if history:
-        messages.extend(history)
-    else:
-        messages.append({"role": "user", "content": prompt})
-    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.3)
-
-# Маппинг режимов на функции
-MODE_HANDLERS = {
-    "coding": ask_groq_coding,
-    "advice": ask_groq_advice,
-    "design": ask_groq_design,
-    "analytics": ask_groq_analytics,
-    "content": ask_groq_content,
-    "marketing": ask_groq_marketing,
-    "features": ask_groq_features,
-}
-
-MODE_NAMES = {
-    "coding": "💻 Кодинг",
-    "advice": "📋 Советы по развитию",
-    "design": "🎨 Оформление и дизайн",
-    "analytics": "📊 Аналитика сервера",
-    "content": "📝 Контент и тексты",
-    "marketing": "🛒 Маркетинг и продажи",
-    "features": "🤖 Идеи для бота",
-}
+    messages.append({"role": "user", "content": prompt})
+    
+    temperature = 0.4 if mode in ["content", "design", "advice"] else 0.2
+    return await ask_groq_with_retry(model, messages, temperature=temperature)
 
 # ================= КОНФИГУРАЦИЯ =================
 CONFIG = {
@@ -1372,46 +1319,32 @@ async def setup_panels():
     logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
 
 # ================= ИИ-КОНВЕЙЕР (7 РЕЖИМОВ) =================
+
 class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
-    def __init__(self):
+    def __init__(self, mode: str):
         super().__init__(timeout=None)
+        self.mode = mode
+        mode_name = MODE_NAMES.get(mode, mode)
         
-        self.mode_select = discord.ui.Select(
-            placeholder="🎯 Выберите режим работы",
-            options=[
-                discord.SelectOption(label="💻 Кодинг", value="coding", description="Написать код для бота", emoji="💻"),
-                discord.SelectOption(label="📋 Советы", value="advice", description="Развитие сервера и сообщества", emoji="📋"),
-                discord.SelectOption(label="🎨 Оформление", value="design", description="Дизайн каналов, роли, эмбеды", emoji="🎨"),
-                discord.SelectOption(label="📊 Аналитика", value="analytics", description="Анализ статистики сервера", emoji="📊"),
-                discord.SelectOption(label="📝 Контент", value="content", description="Тексты, новости, правила", emoji="📝"),
-                discord.SelectOption(label="🛒 Маркетинг", value="marketing", description="Акции, продажи, привлечение", emoji="🛒"),
-                discord.SelectOption(label="🤖 Бот-фичи", value="features", description="Идеи для новых функций", emoji="🤖"),
-            ],
-            row=0
-        )
         self.task_input = TextInput(
-            label="Ваш запрос",
+            label=f"Ваш запрос ({mode_name})",
             style=discord.TextStyle.paragraph,
             placeholder="Опишите, что вам нужно...",
             max_length=2000,
-            required=True,
-            row=1
+            required=True
         )
         self.format_input = TextInput(
             label="Формат ответа (опционально)",
             style=discord.TextStyle.short,
             placeholder="текст / код / список / подробно",
             max_length=50,
-            required=False,
-            row=2
+            required=False
         )
         
-        self.add_item(self.mode_select)
         self.add_item(self.task_input)
         self.add_item(self.format_input)
     
     async def on_submit(self, interaction: discord.Interaction):
-        mode = self.mode_select.values[0] if self.mode_select.values else "coding"
         user_query = self.task_input.value
         format_hint = self.format_input.value or ""
 
@@ -1431,27 +1364,23 @@ class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
         await interaction.response.defer(ephemeral=True)
         
         embed = discord.Embed(
-            title=f"🤖 ИИ-Конвейер: {MODE_NAMES.get(mode, mode)}",
+            title=f"🤖 ИИ-Конвейер: {MODE_NAMES.get(self.mode, self.mode)}",
             description="⏳ **Обработка запроса...**\nИИ анализирует и готовит ответ.",
             color=discord.Color.blue()
         )
         status_msg = await interaction.followup.send(embed=embed, ephemeral=True)
         
         try:
-            # Формируем полный запрос с учётом формата
+            # Формируем полный запрос
             full_prompt = user_query
             if format_hint:
                 full_prompt += f"\n\nФормат ответа: {format_hint}"
             
-            # Получаем историю диалога
-            history = get_history(interaction.user.id, mode)
-            history_messages = []
-            for msg in history:
-                history_messages.append({"role": msg["role"], "content": msg["content"]})
+            # Получаем историю
+            history = get_history_messages(interaction.user.id, self.mode)
             
-            # Вызываем соответствующую функцию
-            handler = MODE_HANDLERS.get(mode, ask_groq_coding)
-            response = await handler(full_prompt, history_messages)
+            # Вызываем ИИ
+            response = await ask_groq_mode(self.mode, full_prompt, history)
             
             if response.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
@@ -1461,22 +1390,21 @@ class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
                 return
             
             # Сохраняем в историю
-            add_to_history(interaction.user.id, mode, "user", user_query)
-            add_to_history(interaction.user.id, mode, "assistant", response[:500])  # Сохраняем часть ответа
+            add_to_history(interaction.user.id, self.mode, "user", user_query)
+            add_to_history(interaction.user.id, self.mode, "assistant", response[:1000])
             
             # Отправляем результат
             if len(response) <= 1900:
-                embed.title = f"✅ {MODE_NAMES.get(mode, mode)}"
+                embed.title = f"✅ {MODE_NAMES.get(self.mode, self.mode)}"
                 embed.description = response[:1800]
                 embed.color = discord.Color.green()
                 await status_msg.edit(embed=embed)
             else:
-                # Длинный ответ — отправляем файлом
-                filename = f"ai_result_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                filename = f"ai_result_{self.mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
                 file_bytes = response.encode('utf-8')
                 file_obj = io.BytesIO(file_bytes)
                 await interaction.followup.send(
-                    content=f"✅ **{MODE_NAMES.get(mode, mode)}**\nРезультат сохранён в файл:",
+                    content=f"✅ **{MODE_NAMES.get(self.mode, self.mode)}**\nРезультат сохранён в файл:",
                     file=discord.File(file_obj, filename=filename),
                     ephemeral=True
                 )
@@ -1489,20 +1417,55 @@ class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
             embed.color = discord.Color.red()
             await status_msg.edit(embed=embed)
 
-class AIClearHistoryButton(discord.ui.Button):
+class ModeSelectView(discord.ui.View):
     def __init__(self):
-        super().__init__(label="🗑️ Очистить историю", style=discord.ButtonStyle.danger, custom_id="clear_ai_history")
+        super().__init__(timeout=60)
     
-    async def callback(self, interaction: discord.Interaction):
-        # Тут нужно определить режим, но для простоты очищаем все режимы
-        for mode in MODE_HANDLERS.keys():
+    @discord.ui.button(label="💻 Кодинг", style=discord.ButtonStyle.primary, custom_id="mode_coding")
+    async def mode_coding(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("coding"))
+    
+    @discord.ui.button(label="📋 Советы", style=discord.ButtonStyle.primary, custom_id="mode_advice")
+    async def mode_advice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("advice"))
+    
+    @discord.ui.button(label="🎨 Оформление", style=discord.ButtonStyle.primary, custom_id="mode_design")
+    async def mode_design(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("design"))
+    
+    @discord.ui.button(label="📊 Аналитика", style=discord.ButtonStyle.primary, custom_id="mode_analytics")
+    async def mode_analytics(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("analytics"))
+    
+    @discord.ui.button(label="📝 Контент", style=discord.ButtonStyle.primary, custom_id="mode_content")
+    async def mode_content(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("content"))
+    
+    @discord.ui.button(label="🛒 Маркетинг", style=discord.ButtonStyle.primary, custom_id="mode_marketing")
+    async def mode_marketing(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("marketing"))
+    
+    @discord.ui.button(label="🤖 Бот-фичи", style=discord.ButtonStyle.primary, custom_id="mode_features")
+    async def mode_features(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AITaskModal("features"))
+    
+    @discord.ui.button(label="🗑️ Очистить историю", style=discord.ButtonStyle.danger, custom_id="clear_history")
+    async def clear_history(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Очищаем историю для всех режимов
+        for mode in MODE_NAMES.keys():
             clear_history(interaction.user.id, mode)
         await interaction.response.send_message("✅ История диалогов ИИ очищена!", ephemeral=True)
 
-class AIView(discord.ui.View):
+class StartAIButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(AIClearHistoryButton())
+        super().__init__(label="🚀 Выбрать режим", style=discord.ButtonStyle.success, custom_id="start_ai")
+    
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            "🎯 **Выберите режим работы ИИ-конвейера:**",
+            view=ModeSelectView(),
+            ephemeral=True
+        )
 
 async def setup_ai_panel():
     channel = await _fetch_channel_safe(AI_CONVEYOR_CHANNEL_ID)
@@ -1524,7 +1487,7 @@ async def setup_ai_panel():
     embed = discord.Embed(
         title="🤖 Умный ИИ-Конвейер",
         description=(
-            "**Выберите режим работы и задайте вопрос.**\n\n"
+            "**Выберите режим работы, нажав на кнопку ниже.**\n\n"
             "📋 **Доступные режимы:**\n"
             "• 💻 **Кодинг** — написание кода для бота\n"
             "• 📋 **Советы** — развитие сервера и сообщества\n"
@@ -1542,17 +1505,10 @@ async def setup_ai_panel():
         ),
         color=discord.Color.blurple()
     )
-    embed.set_footer(text="Нажмите на кнопку ниже для создания запроса")
+    embed.set_footer(text="Нажмите на кнопку ниже для выбора режима")
     
     view = View()
-    start_button = Button(label="🚀 Запустить ИИ-Конвейер", style=discord.ButtonStyle.green, custom_id="start_ai_panel")
-    
-    async def start_callback(i: discord.Interaction):
-        await i.response.send_modal(AITaskModal())
-    
-    start_button.callback = start_callback
-    view.add_item(start_button)
-    view.add_item(AIClearHistoryButton())
+    view.add_item(StartAIButton())
     
     try:
         await channel.send(embed=embed, view=view)
@@ -1612,7 +1568,7 @@ async def on_ready():
     try:
         bot.add_view(VerifyView())
         bot.add_view(TicketCreateButton())
-        bot.add_view(AIView())
+        bot.add_view(StartAIButton())
         bot.add_view(OrderCloseView(0, 0, None, None))
         logger.info("✅ Persistent Views зарегистрированы")
     except Exception as e:

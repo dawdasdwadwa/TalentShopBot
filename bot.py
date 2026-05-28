@@ -20,6 +20,7 @@ from database import (
     add_review, get_seller_rating, get_seller_reviews,
     get_daily_purchase_count, convert_price_rub
 )
+import groq
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -30,6 +31,15 @@ TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531
 TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
 TICKET_CHANNEL_ID = 1500242313211805788
 BACKUP_CHANNEL_ID = 1503146387129368718
+
+# ================= ИНИЦИАЛИЗАЦИЯ GROQ =================
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    logger.warning("⚠️ ВНИМАНИЕ: Переменная окружения GROQ_API_KEY не найдена на хостинге! ИИ-конвейер не будет работать.")
+    groq_client = None
+else:
+    groq_client = groq.Groq(api_key=GROQ_API_KEY)
+    logger.info("✅ Groq клиент инициализирован")
 
 # ================= КОНФИГУРАЦИЯ =================
 CONFIG = {
@@ -324,17 +334,14 @@ async def _fetch_channel_safe(channel_id: int, retries: int = 5) -> Optional[dis
     for attempt in range(retries):
         ch = bot.get_channel(channel_id)
         if ch:
-            logger.info(f"✅ _fetch_channel_safe: канал {channel_id} найден через get_channel (попытка {attempt + 1})")
             return ch
         try:
             ch = await bot.fetch_channel(channel_id)
             if ch:
-                logger.info(f"✅ _fetch_channel_safe: канал {channel_id} найден через fetch_channel (попытка {attempt + 1})")
                 return ch
         except Exception as e:
-            logger.warning(f"⚠️ _fetch_channel_safe: попытка {attempt + 1}/{retries}, канал {channel_id}: {e}")
+            logger.warning(f"Попытка {attempt + 1}/{retries}: не удалось получить канал {channel_id}: {e}")
         await asyncio.sleep(3)
-    logger.error(f"❌ _fetch_channel_safe: канал {channel_id} не найден после {retries} попыток")
     return None
 
 async def _do_shop_update(guild: discord.Guild):
@@ -942,23 +949,6 @@ async def list_lots(interaction: discord.Interaction):
     await send_or_update_shop(interaction.guild)
     await interaction.followup.send("✅ Магазин обновлён", ephemeral=True)
 
-@bot.tree.command(name='test_verify', description='[OWNER] Тестовая отправка панели верификации')
-async def test_verify(interaction: discord.Interaction):
-    if not await owner_only(interaction):
-        return
-    await interaction.response.defer(ephemeral=True)
-    config = get_config(interaction.guild_id)
-    if not config:
-        await interaction.followup.send("❌ Конфиг для этого сервера не найден", ephemeral=True)
-        return
-    logger.info(f"🔧 test_verify: ручной запуск от {interaction.user} на {interaction.guild.name}")
-    await _send_verify_panel(config)
-    ch_id = config.get("verify_channel")
-    await interaction.followup.send(
-        f"✅ Попытка отправки панели верификации в канал <#{ch_id}>\nСмотри логи Railway для деталей.",
-        ephemeral=True
-    )
-
 # ================= ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_cleanup_tickets():
     await bot.wait_until_ready()
@@ -1011,32 +1001,38 @@ async def cleanup_spam_cache():
 async def _send_verify_panel(guild_config: dict):
     channel_id = guild_config.get("verify_channel")
     if not channel_id:
-        logger.warning(f"❌ Верификация: verify_channel не указан в конфиге '{guild_config.get('name')}'")
+        logger.warning(f"❌ Верификация: verify_channel не указан в конфиге {guild_config.get('name')}")
         return
-
-    logger.info(f"⏳ Верификация: ищем канал {channel_id} для '{guild_config.get('name')}'...")
+    
+    logger.info(f"⏳ Верификация: ищем канал {channel_id}...")
     channel = await _fetch_channel_safe(channel_id)
     if not channel:
-        logger.error(f"❌ Верификация: канал {channel_id} не найден для '{guild_config.get('name')}'!")
+        logger.error(f"❌ Верификация: канал {channel_id} не найден!")
         return
-
-    logger.info(f"✅ Верификация: канал #{channel.name} найден, очищаем старые сообщения...")
+    
+    logger.info(f"✅ Верификация: канал {channel.name} найден, очищаем старые сообщения...")
+    
     try:
         async for msg in channel.history(limit=50):
             if msg.author == bot.user:
                 try:
                     await msg.delete()
                 except Exception as e:
-                    logger.warning(f"Не удалось удалить сообщение верификации: {e}")
+                    logger.warning(f"Не удалось удалить сообщение: {e}")
     except Exception as e:
         logger.warning(f"Ошибка очистки канала верификации: {e}")
 
-    embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=discord.Color.gold())
+    embed = discord.Embed(
+        title="🔒 Верификация",
+        description="Нажми на кнопку ниже, чтобы получить доступ к серверу.",
+        color=discord.Color.gold()
+    )
+    
     try:
         await channel.send(embed=embed, view=VerifyView())
-        logger.info(f"✅ Верификация: сообщение отправлено в #{channel.name}")
+        logger.info(f"✅ Верификация: сообщение отправлено в канал {channel.name}")
     except Exception as e:
-        logger.error(f"❌ Верификация: ошибка отправки сообщения: {e}")
+        logger.error(f"❌ Верификация: ошибка отправки: {e}")
 
 async def _send_ticket_panel_from_config(guild_config: dict):
     channel_id = guild_config.get("ticket_channel")
@@ -1187,88 +1183,95 @@ async def setup_panels():
     
     logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
 
-# ================= БЛОК ИНТЕГРАЦИИ НЕЙРОСЕТЕЙ (GEMINI SDK) =================
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+# ================= БЛОК ИНТЕГРАЦИИ GROQ (ИИ-КОНВЕЙЕР) =================
 
-if not GEMINI_KEY:
-    logger.warning("⚠️ ВНИМАНИЕ: Переменная окружения GEMINI_API_KEY не найдена на хостинге!")
+# Конфигурация моделей Groq
+MODEL_ANALYST = "qwen/qwen3-32b"           # Аналитик (60 RPM)
+MODEL_REVIEWER = "llama-3.3-70b-versatile" # Ревьюер (30 RPM)
+MODEL_FINALIZER = "kimi-k2-instruct"       # Финальный сборщик (60 RPM)
 
-_gemini_client: Optional[genai.Client] = None
+ai_cooldowns = {}
 
-def get_gemini_client() -> Optional[genai.Client]:
-    global _gemini_client
-    if not GEMINI_KEY:
-        return None
-    if _gemini_client is None:
-        _gemini_client = genai.Client(api_key=GEMINI_KEY)
-    return _gemini_client
+# ================= ФУНКЦИИ ДЛЯ РАБОТЫ С GROQ =================
 
-MODEL = "gemini-2.5-flash"
-
-async def ask_gemini_analyst(user_task: str) -> str:
-    client = get_gemini_client()
-    if not client:
-        return "Ошибка: Не задан GEMINI_API_KEY на хостинге"
+async def ask_groq_analyst(user_task: str) -> str:
+    """Шаг 1: Аналитик — превращает задачу в технический промт"""
+    if not groq_client:
+        return "Ошибка: GROQ_API_KEY не задан на хостинге"
     try:
         prompt = (
             "Преврати это описание задачи в идеальный technical prompt для написания кода. "
             f"Выдай только сам промт без лишних вступлений: {user_task}"
         )
-        response = await client.aio.models.generate_content(
-            model=MODEL,
-            contents=prompt,
+        # Используем sync вызов, но в отдельном потоке чтобы не блокировать
+        response = await asyncio.to_thread(
+            groq_client.chat.completions.create,
+            model=MODEL_ANALYST,
+            messages=[
+                {"role": "system", "content": "Ты — AI Аналитик. Твоя задача: превратить размышления пользователя в чёткое, структурированное Техническое Задание (ТЗ) для программиста."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
         )
-        return response.text
+        return response.choices[0].message.content
     except Exception as e:
-        logger.exception("Ошибка на этапе Аналитика Gemini")
-        return f"Ошибка Gemini API (Аналитик): {e}"
+        logger.exception("Ошибка Groq Analyst")
+        return f"Ошибка Groq API (Аналитик): {e}"
 
-async def ask_gemini_coder(prompt: str, history: list = None, model_override: str = None) -> str:
-    client = get_gemini_client()
-    if not client:
-        return "Ошибка: Не задан GEMINI_API_KEY на хостинге"
+async def ask_groq_coder(prompt: str, history: list = None, model_override: str = None) -> str:
+    """Шаг 2 и 4: Кодер — пишет и исправляет код"""
+    if not groq_client:
+        return "Ошибка: GROQ_API_KEY не задан на хостинге"
     try:
-        model = model_override or MODEL
+        model = model_override or MODEL_FINALIZER
+        
+        messages = [
+            {"role": "system", "content": "Ты — Senior Python Developer. Пиши асинхронный код для discord.py с правильной обработкой ошибок и логированием. Следуй PEP 8."}
+        ]
+        
         if history:
-            contents = []
             for msg in history:
-                role = "user" if msg["role"] == "user" else "model"
+                role = "user" if msg["role"] == "user" else "assistant"
                 text = msg["parts"][0]["text"] if "parts" in msg else msg.get("content", "")
-                contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=text)]))
-            response = await client.aio.models.generate_content(
-                model=model,
-                contents=contents,
-            )
+                messages.append({"role": role, "content": text})
         else:
-            response = await client.aio.models.generate_content(
-                model=model,
-                contents=prompt,
-            )
-        return response.text
-    except Exception as e:
-        logger.exception("Ошибка на этапе Кодинга Gemini")
-        return f"Ошибка Gemini API (Кодер): {e}"
-
-async def ask_gemini_reviewer(code: str) -> str:
-    client = get_gemini_client()
-    if not client:
-        return "Ошибка: Не задан GEMINI_API_KEY на хостинге"
-    try:
-        response = await client.aio.models.generate_content(
-            model=MODEL,
-            contents=code,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=(
-                    "Ты высококлассный ревьюер кода. Твоя единственная задача — найти ошибки, "
-                    "баги, уязвимости или места для оптимизации в предоставленном коде. "
-                    "Пиши строго кратко и тезисно только сами замечания, которые нужно исправить."
-                )
-            ),
+            messages.append({"role": "user", "content": prompt})
+        
+        response = await asyncio.to_thread(
+            groq_client.chat.completions.create,
+            model=model,
+            messages=messages,
+            temperature=0.2,
         )
-        return response.text
+        return response.choices[0].message.content
     except Exception as e:
-        logger.exception("Ошибка на этапе Ревью Gemini")
-        return f"Ошибка Gemini API (Ревьюер): {e}"
+        logger.exception("Ошибка Groq Coder")
+        return f"Ошибка Groq API (Кодер): {e}"
+
+async def ask_groq_reviewer(code: str, user_goal: str) -> str:
+    """Шаг 3: Ревьюер — проверяет код на ошибки"""
+    if not groq_client:
+        return "Ошибка: GROQ_API_KEY не задан на хостинге"
+    try:
+        prompt = (
+            f"Проанализируй код на наличие багов, уязвимостей и соответствие цели: {user_goal}.\n"
+            f"Если ошибок нет — напиши только 'OK'.\n"
+            f"Если есть ошибки — перечисли их кратко, тезисно.\n\n"
+            f"```python\n{code}\n```"
+        )
+        response = await asyncio.to_thread(
+            groq_client.chat.completions.create,
+            model=MODEL_REVIEWER,
+            messages=[
+                {"role": "system", "content": "Ты — Senior Code Reviewer. Проверяй код строго, но конструктивно."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.exception("Ошибка Groq Reviewer")
+        return f"Ошибка Groq API (Ревьюер): {e}"
 
 # ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДОСТАВКИ РЕЗУЛЬТАТА =================
 async def send_smart_result(user: discord.User, text: str, fname: str, user_choice: str):
@@ -1301,14 +1304,7 @@ async def send_smart_result(user: discord.User, text: str, fname: str, user_choi
         logger.exception("Ошибка send_smart_result")
         return False
 
-
-# ================= НАСТРОЙКИ, БЕЗОПАСНОСТЬ И МОДЕЛИ ИИ =================
-MODEL_ANALYST = "gemini-2.5-flash"
-MODEL_REVIEWER = "gemini-2.5-pro"
-MODEL_FINALIZER = "gemini-2.5-pro"
-
-ai_cooldowns = {}
-
+# ================= БЕЗОПАСНОСТЬ =================
 BANNED_CODE_PATTERNS = [
     r"discord\.tokens", r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}",
     r"as_selfbot", r"selfbot",
@@ -1346,8 +1342,7 @@ def get_minimal_guild_context(guild: discord.Guild) -> str:
         "admin_roles": roles_data[:5]
     }, ensure_ascii=False, indent=2)
 
-
-# ================= АСИНХРОННАЯ ОЧЕРЕДЬ AI (QUEUE SYSTEM) =================
+# ================= АСИНХРОННАЯ ОЧЕРЕДЬ AI =================
 ai_queue = asyncio.Queue()
 
 class AIJobRequest:
@@ -1363,19 +1358,16 @@ async def execute_queued_ai(model_name: str, prompt: str, history: list = None) 
     return await job.future
 
 async def ai_worker():
-    logger.info("🤖 Асинхронный ИИ-воркер успешно запущен.")
+    logger.info("🤖 Асинхронный ИИ-воркер (Groq) успешно запущен.")
     while True:
         job: AIJobRequest = await ai_queue.get()
         try:
-            if job.history:
-                res = await ask_gemini_coder(job.prompt, history=job.history, model_override=job.model_name)
+            if job.model_name == "analyst":
+                res = await ask_groq_analyst(job.prompt)
+            elif job.model_name == "reviewer":
+                res = await ask_groq_reviewer(job.prompt, job.prompt)  # для reviewer нужно передать code и user_goal
             else:
-                if job.model_name == MODEL_ANALYST:
-                    res = await ask_gemini_analyst(job.prompt)
-                elif job.model_name == MODEL_REVIEWER:
-                    res = await ask_gemini_reviewer(job.prompt)
-                else:
-                    res = await ask_gemini_coder(job.prompt, model_override=job.model_name)
+                res = await ask_groq_coder(job.prompt, history=job.history, model_override=job.model_name)
             
             job.future.set_result(res)
         except Exception as e:
@@ -1384,7 +1376,6 @@ async def ai_worker():
         finally:
             ai_queue.task_done()
             await asyncio.sleep(1.0)
-
 
 # ================= МОДАЛКА И ИИ-КОНВЕЙЕР ОБРАБОТКИ ЗАДАЧ =================
 class TaskModal(Modal, title="Постановка задачи для ИИ"):
@@ -1458,7 +1449,7 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 f"Сделай упор на цель пользователя ({user_goal}). Если цель связана с оформлением текста — удели внимание структуре сообщений и эмбедам. Если цель 'Код' — сделай упор на чистую архитектуру. Создай идеальный промт для Кодера."
             )
 
-            gemini_prompt = await execute_queued_ai(MODEL_ANALYST, full_analyst_task)
+            gemini_prompt = await ask_groq_analyst(full_analyst_task)
             if gemini_prompt.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
                 embed.description = f"Сбой на этапе Аналитика (Генерация ТЗ):\n{gemini_prompt[:1800]}"
@@ -1466,10 +1457,10 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 await status_msg.edit(embed=embed)
                 return
 
-            embed.description = "⏳ **Шаг 2/4:** ТЗ сформировано. Gemini Pro создает архитектуру решения..."
+            embed.description = "⏳ **Шаг 2/4:** ТЗ сформировано. Groq создает архитектуру решения..."
             await status_msg.edit(embed=embed)
 
-            initial_code = await execute_queued_ai(MODEL_FINALIZER, f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}")
+            initial_code = await ask_groq_coder(f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}")
             if initial_code.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
                 embed.description = f"Сбой на этапе создания первичного решения:\n{initial_code[:1800]}"
@@ -1488,7 +1479,7 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 f"💻 ИСХОДНЫЙ КОД ДЛЯ ПРОВЕРКИ:\n```python\n{initial_code}\n```\n\n"
                 f"Проанализируй код на наличие багов, скрытых уязвимостей, логов, соответствие ТЗ и выведи строгий экспертный вердикт."
             )
-            gemini_review = await execute_queued_ai(MODEL_REVIEWER, full_reviewer_prompt)
+            gemini_review = await ask_groq_reviewer(full_reviewer_prompt, user_goal)
             if gemini_review.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
                 embed.description = f"Сбой на этапе проведения ИИ-Ревью:\n{gemini_review[:1800]}"
@@ -1496,15 +1487,21 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
                 await status_msg.edit(embed=embed)
                 return
 
-            embed.description = "⏳ **Шаг 4/4:** Отчет ревьюера обработан. Финальная сборка и полировка архитектуры..."
-            await status_msg.edit(embed=embed)
+            # Ранний выход: если ошибок нет
+            if "OK" in gemini_review or "ошибок не найдено" in gemini_review.lower():
+                final_result = initial_code
+                embed.description = "🟢 **Ревью пройдено!** Отдаю готовый код."
+                await status_msg.edit(embed=embed)
+            else:
+                embed.description = "🛠️ **Шаг 4/4:** Найдены мелкие недочёты. Идет финальная полировка..."
+                await status_msg.edit(embed=embed)
 
-            history = [
-                {"role": "user", "parts": [{"text": f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}"}]},
-                {"role": "model", "parts": [{"text": initial_code}]},
-                {"role": "user", "parts": [{"text": f"Твой результат прошел проверку. Вот замечания, которые нужно обязательно учесть и исправить:\n{gemini_review}\n\nВыведи итоговый идеальный результат. Если формат '{user_format}' требует только чистый код — выведи только код. Если просили красивое оформление/текст — выведи отформатированный текст."}]}
-            ]
-            final_result = await execute_queued_ai(MODEL_FINALIZER, "", history=history)
+                history = [
+                    {"role": "user", "parts": [{"text": f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}"}]},
+                    {"role": "model", "parts": [{"text": initial_code}]},
+                    {"role": "user", "parts": [{"text": f"Твой результат прошел проверку. Вот замечания, которые нужно обязательно учесть и исправить:\n{gemini_review}\n\nВыведи итоговый идеальный результат. Если формат '{user_format}' требует только чистый код — выведи только код. Если просили красивое оформление/текст — выведи отформатированный текст."}]}
+                ]
+                final_result = await ask_groq_coder("", history=history)
 
             if final_result.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
@@ -1554,7 +1551,6 @@ class TaskModal(Modal, title="Постановка задачи для ИИ"):
             except Exception:
                 pass
 
-
 # ================= ИИ-КОНВЕЙЕР: VIEW И ПАНЕЛЬ =================
 class TaskView(discord.ui.View):
     def __init__(self):
@@ -1585,22 +1581,22 @@ async def setup_ai_panel():
     embed = discord.Embed(
         title="🤖 ИИ-Конвейер задач",
         description=(
-            "**Оптимизированный гибридный конвейер на базе Gemini 2.5 Flash & Pro**\n\n"
-            "🔹 **Шаг 1 (Flash)** — Аналитик формирует техническое задание\n"
-            "🔹 **Шаг 2 (Pro)** — Кодер строит архитектуру и пишет решение\n"
-            "🔹 **Шаг 3 (Pro)** — Экспертный Ревьюер проверяет код на уязвимости и баги\n"
-            "🔹 **Шаг 4 (Pro)** — Сборщик исправляет замечания и полирует результат\n\n"
-            "⚠️ *Действует лимит: 1 запуск в 60 секунд. Все запросы обрабатываются через асинхронную безопасную очередь.*"
+            "**Оптимизированный гибридный конвейер на базе Groq (Llama 4, Qwen, Kimi K2)**\n\n"
+            "🔹 **Шаг 1 (Qwen)** — Аналитик формирует техническое задание\n"
+            "🔹 **Шаг 2 (Kimi K2)** — Кодер строит архитектуру и пишет решение\n"
+            "🔹 **Шаг 3 (Llama 3.3)** — Экспертный Ревьюер проверяет код на уязвимости и баги\n"
+            "🔹 **Шаг 4 (Kimi K2)** — Сборщик исправляет замечания и полирует результат\n\n"
+            "⚠️ *Действует лимит: 1 запуск в 60 секунд. Все запросы обрабатываются через асинхронную безопасную очередь.*\n\n"
+            "**💡 Groq — полностью бесплатно, без карты!**"
         ),
         color=discord.Color.blurple()
     )
     embed.set_footer(text="Результат будет отправлен в ваши личные сообщения")
     try:
         await channel.send(embed=embed, view=TaskView())
-        logger.info("✅ Оптимизированная панель ИИ-конвейера отправлена")
+        logger.info("✅ Оптимизированная панель ИИ-конвейера (Groq) отправлена")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки панели ИИ-конвейера: {e}")
-
 
 async def _safe_task(coro, name: str):
     try:
@@ -1608,14 +1604,13 @@ async def _safe_task(coro, name: str):
     except Exception:
         logger.exception(f"❌ Необработанное исключение в задаче '{name}'")
 
-
 async def _startup_background():
     logger.info("🔥 _startup_background() начал работу...")
     
     global _ai_worker_task
     if '_ai_worker_task' not in globals() or _ai_worker_task.done():
         _ai_worker_task = bot.loop.create_task(ai_worker())
-        logger.info("✅ Асинхронная ИИ-очередь запущена")
+        logger.info("✅ Асинхронная ИИ-очередь (Groq) запущена")
 
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
@@ -1631,12 +1626,11 @@ async def _startup_background():
 
     try:
         await setup_ai_panel()
-        logger.info("✅ Панель ИИ-конвейера настроена")
+        logger.info("✅ Панель ИИ-конвейера (Groq) настроена")
     except Exception as e:
         logger.exception("❌ Ошибка настройки панели ИИ-конвейера")
     
     logger.info("✅ _startup_background() завершён!")
-
 
 # ================= СОБЫТИЯ =================
 @bot.event

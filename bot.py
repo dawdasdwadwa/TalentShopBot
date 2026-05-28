@@ -320,18 +320,21 @@ class TicketCreateButton(discord.ui.View):
         await interaction.response.send_modal(TicketModal())
 
 # ================= МАГАЗИН =================
-async def _fetch_channel_safe(channel_id: int, retries: int = 3) -> Optional[discord.TextChannel]:
+async def _fetch_channel_safe(channel_id: int, retries: int = 5) -> Optional[discord.TextChannel]:
     for attempt in range(retries):
         ch = bot.get_channel(channel_id)
         if ch:
+            logger.info(f"✅ _fetch_channel_safe: канал {channel_id} найден через get_channel (попытка {attempt + 1})")
             return ch
         try:
             ch = await bot.fetch_channel(channel_id)
             if ch:
+                logger.info(f"✅ _fetch_channel_safe: канал {channel_id} найден через fetch_channel (попытка {attempt + 1})")
                 return ch
-        except Exception:
-            pass
-        await asyncio.sleep(2)
+        except Exception as e:
+            logger.warning(f"⚠️ _fetch_channel_safe: попытка {attempt + 1}/{retries}, канал {channel_id}: {e}")
+        await asyncio.sleep(3)
+    logger.error(f"❌ _fetch_channel_safe: канал {channel_id} не найден после {retries} попыток")
     return None
 
 async def _do_shop_update(guild: discord.Guild):
@@ -939,6 +942,23 @@ async def list_lots(interaction: discord.Interaction):
     await send_or_update_shop(interaction.guild)
     await interaction.followup.send("✅ Магазин обновлён", ephemeral=True)
 
+@bot.tree.command(name='test_verify', description='[OWNER] Тестовая отправка панели верификации')
+async def test_verify(interaction: discord.Interaction):
+    if not await owner_only(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)
+    config = get_config(interaction.guild_id)
+    if not config:
+        await interaction.followup.send("❌ Конфиг для этого сервера не найден", ephemeral=True)
+        return
+    logger.info(f"🔧 test_verify: ручной запуск от {interaction.user} на {interaction.guild.name}")
+    await _send_verify_panel(config)
+    ch_id = config.get("verify_channel")
+    await interaction.followup.send(
+        f"✅ Попытка отправки панели верификации в канал <#{ch_id}>\nСмотри логи Railway для деталей.",
+        ephemeral=True
+    )
+
 # ================= ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_cleanup_tickets():
     await bot.wait_until_ready()
@@ -991,26 +1011,32 @@ async def cleanup_spam_cache():
 async def _send_verify_panel(guild_config: dict):
     channel_id = guild_config.get("verify_channel")
     if not channel_id:
-        return
-    channel = await _fetch_channel_safe(channel_id)
-    if not channel:
+        logger.warning(f"❌ Верификация: verify_channel не указан в конфиге '{guild_config.get('name')}'")
         return
 
+    logger.info(f"⏳ Верификация: ищем канал {channel_id} для '{guild_config.get('name')}'...")
+    channel = await _fetch_channel_safe(channel_id)
+    if not channel:
+        logger.error(f"❌ Верификация: канал {channel_id} не найден для '{guild_config.get('name')}'!")
+        return
+
+    logger.info(f"✅ Верификация: канал #{channel.name} найден, очищаем старые сообщения...")
     try:
         async for msg in channel.history(limit=50):
             if msg.author == bot.user:
                 try:
                     await msg.delete()
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить сообщение верификации: {e}")
+    except Exception as e:
+        logger.warning(f"Ошибка очистки канала верификации: {e}")
 
     embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=discord.Color.gold())
     try:
         await channel.send(embed=embed, view=VerifyView())
+        logger.info(f"✅ Верификация: сообщение отправлено в #{channel.name}")
     except Exception as e:
-        logger.error(f"Ошибка отправки верификации: {e}")
+        logger.error(f"❌ Верификация: ошибка отправки сообщения: {e}")
 
 async def _send_ticket_panel_from_config(guild_config: dict):
     channel_id = guild_config.get("ticket_channel")

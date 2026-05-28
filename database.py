@@ -217,19 +217,29 @@ async def init_db():
             return
         _initializing = True
         try:
+            print("🔥 init_db(): начало инициализации БД...")
+            logger.info("🔥 init_db(): начало инициализации БД...")
+            
             db_dir = os.path.dirname(DB_PATH)
             if db_dir and not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
+                print(f"✅ Создана директория БД: {db_dir}")
 
+            print(f"⏳ Подключение к БД: {DB_PATH}")
             db = await aiosqlite.connect(DB_PATH, timeout=20.0)
             db.row_factory = aiosqlite.Row
+            print("✅ БД подключена")
+            
+            print("⏳ Установка PRAGMA...")
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA foreign_keys=ON")
             await db.execute("PRAGMA synchronous=NORMAL")
             await db.execute("PRAGMA temp_store=MEMORY")
             await db.execute("PRAGMA mmap_size=268435456")
             await db.execute("PRAGMA cache_size=-64000")
+            print("✅ PRAGMA установлены")
 
+            print("⏳ Создание таблиц...")
             await db.execute('''CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -393,9 +403,19 @@ async def init_db():
                 updated_at TEXT
             )''')
 
+            print("✅ Все таблицы созданы")
+            
+            print("⏳ Коммит...")
             await db.commit()
+            print("✅ Коммит завершён")
+            
+            print("⏳ Загрузка кэша...")
             await refresh_cache()
+            print("✅ Кэш загружен")
 
+        except Exception as e:
+            print(f"❌ Ошибка инициализации БД: {e}")
+            logger.exception("❌ Ошибка инициализации БД")
         finally:
             _initializing = False
 
@@ -1138,10 +1158,34 @@ async def restore_from_backup_channel(channel_id: int, bot):
 # ================= CACHE =================
 async def refresh_cache():
     global categories_cache, lots_cache, promos_cache, blacklist_cache, stats_cache, warnings_cache
-    categories_cache = await get_all_categories()
-    lots_cache = await get_all_lots()
-    promos_cache = await get_all_promos()
-    blacklist_cache = await get_blacklist()
-    stats_cache = await get_all_stats()
-    warnings_cache = await get_all_warnings()
-    logger.info("✅ Cache refreshed successfully")
+    print("⏳ refresh_cache(): начало загрузки кэша...")
+    try:
+        print("  ⏳ get_all_categories()...")
+        categories_cache = await get_all_categories()
+        print(f"    ✅ Категории загружены: {len(categories_cache)}")
+        
+        print("  ⏳ get_all_lots()...")
+        lots_cache = await get_all_lots()
+        print(f"    ✅ Товары загружены: {len(lots_cache)}")
+        
+        print("  ⏳ get_all_promos()...")
+        promos_cache = await get_all_promos()
+        print(f"    ✅ Промо загружены: {len(promos_cache)}")
+        
+        print("  ⏳ get_blacklist()...")
+        blacklist_cache = await get_blacklist()
+        print(f"    ✅ Чёрный список загружен: {len(blacklist_cache)}")
+        
+        print("  ⏳ get_all_stats()...")
+        stats_cache = await get_all_stats()
+        print(f"    ✅ Статистика загружена: {len(stats_cache)}")
+        
+        print("  ⏳ get_all_warnings()...")
+        warnings_cache = await get_all_warnings()
+        print(f"    ✅ Предупреждения загружены: {len(warnings_cache)}")
+        
+        print("✅ Кэш полностью загружен!")
+        logger.info("✅ Cache refreshed successfully")
+    except Exception as e:
+        print(f"❌ Ошибка при загрузке кэша: {e}")
+        logger.exception("❌ Ошибка при загрузке кэша")

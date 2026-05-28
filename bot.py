@@ -10,7 +10,7 @@ import json
 import asyncio
 import aiohttp
 import logging
-from typing import Optional
+from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta, timezone
 import database as db
 from database import (
@@ -30,14 +30,215 @@ TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
 TICKET_CHANNEL_ID = 1500242313211805788
 BACKUP_CHANNEL_ID = 1503146387129368718
 
-# ================= ИНИЦИАЛИЗАЦИЯ GROQ =================
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    logger.warning("⚠️ ВНИМАНИЕ: Переменная окружения GROQ_API_KEY не найдена на хостинге! ИИ-конвейер не будет работать.")
-    groq_client = None
+# ================= ИНИЦИАЛИЗАЦИЯ GROQ (МУЛЬТИ-КЛЮЧИ) =================
+GROQ_API_KEYS = [
+    os.getenv("GROQ_API_KEY"),
+    os.getenv("GROQ_API_KEY_2"),
+    os.getenv("GROQ_API_KEY_3"),
+    os.getenv("GROQ_API_KEY_4"),
+]
+
+VALID_API_KEYS = [key for key in GROQ_API_KEYS if key]
+
+if not VALID_API_KEYS:
+    logger.warning("⚠️ ВНИМАНИЕ: Ни одного GROQ_API_KEY не найдено! ИИ-конвейер не будет работать.")
+    groq_clients = []
 else:
-    groq_client = groq.Groq(api_key=GROQ_API_KEY)
-    logger.info("✅ Groq клиент инициализирован")
+    groq_clients = [groq.Groq(api_key=key) for key in VALID_API_KEYS]
+    logger.info(f"✅ Groq клиенты инициализированы: {len(groq_clients)} ключей")
+
+_current_client_index = 0
+
+def get_next_groq_client():
+    """Возвращает следующего Groq клиента (циклически)"""
+    global _current_client_index
+    if not groq_clients:
+        return None
+    client = groq_clients[_current_client_index]
+    _current_client_index = (_current_client_index + 1) % len(groq_clients)
+    return client
+
+# ================= КОНФИГУРАЦИЯ МОДЕЛЕЙ =================
+MODEL_CODING = "llama-3.3-70b-versatile"      # Кодинг, Аналитика, Маркетинг, Бот-фичи
+MODEL_CREATIVE = "qwen/qwen3-32b"             # Советы, Оформление, Контент
+
+# ================= СИСТЕМНЫЕ ПРОМПТЫ =================
+SYSTEM_PROMPTS = {
+    "coding": (
+        "Ты — Senior Python Developer с 20-летним стажем. "
+        "Специализируешься на discord.py, асинхронном программировании и базах данных. "
+        "Пиши чистый, документированный код с обработкой ошибок. Следуй PEP 8. "
+        "Используй async/await везде, где это уместно. Отвечай на русском языке."
+    ),
+    "advice": (
+        "Ты — эксперт по Discord серверам с 10-летним опытом. "
+        "Помогаешь владельцам серверов развивать сообщество, увеличивать активность и продажи. "
+        "Давай конкретные, практичные советы без воды. Отвечай на русском языке."
+    ),
+    "design": (
+        "Ты — UI/UX дизайнер Discord серверов. "
+        "Специализируешься на структуре каналов, ролевых системах, эмбедах и визуальном оформлении. "
+        "Предлагай красивые и функциональные решения. Отвечай на русском языке."
+    ),
+    "analytics": (
+        "Ты — аналитик данных с опытом работы с Discord серверами. "
+        "На основе предоставленных данных делай выводы, находи узкие места и предлагай оптимизации. "
+        "Отвечай на русском языке."
+    ),
+    "content": (
+        "Ты — копирайтер для Discord серверов. "
+        "Пиши вовлекающие тексты, эмбеды, правила, новости. "
+        "Используй эмодзи и форматирование для красоты. Отвечай на русском языке."
+    ),
+    "marketing": (
+        "Ты — маркетолог Discord магазинов. "
+        "Разрабатывай стратегии продаж, акции, скидки и способы привлечения покупателей. "
+        "Учитывай специфику цифровых товаров. Отвечай на русском языке."
+    ),
+    "features": (
+        "Ты — продакт-менеджер Discord ботов. "
+        "Генерируй идеи новых функций и команд для магазинного бота. "
+        "Оценивай сложность реализации и потенциальную пользу. Отвечай на русском языке."
+    ),
+}
+
+# Хранилище историй диалогов (по user_id и режиму)
+conversation_histories: Dict[str, List[Dict[str, str]]] = {}
+
+def get_history_key(user_id: int, mode: str) -> str:
+    return f"{user_id}_{mode}"
+
+def add_to_history(user_id: int, mode: str, role: str, content: str):
+    key = get_history_key(user_id, mode)
+    if key not in conversation_histories:
+        conversation_histories[key] = []
+    conversation_histories[key].append({"role": role, "content": content})
+    # Ограничиваем историю 10 сообщениями (5 пар вопрос-ответ)
+    if len(conversation_histories[key]) > 10:
+        conversation_histories[key] = conversation_histories[key][-10:]
+
+def get_history(user_id: int, mode: str) -> List[Dict[str, str]]:
+    key = get_history_key(user_id, mode)
+    return conversation_histories.get(key, [])
+
+def clear_history(user_id: int, mode: str):
+    key = get_history_key(user_id, mode)
+    if key in conversation_histories:
+        del conversation_histories[key]
+
+# ================= ФУНКЦИИ РАБОТЫ С GROQ =================
+async def ask_groq_with_retry(
+    model: str,
+    messages: List[Dict[str, str]],
+    max_retries: int = 4,
+    temperature: float = 0.2
+) -> str:
+    """Пытается выполнить запрос, переключая ключи при ошибке"""
+    for attempt in range(max_retries):
+        client = get_next_groq_client()
+        if not client:
+            return "Ошибка: Нет доступных Groq клиентов"
+        try:
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg and attempt < max_retries - 1:
+                logger.warning(f"429 ошибка на ключе, переключаем... Попытка {attempt + 2}")
+                await asyncio.sleep(1)
+                continue
+            logger.exception(f"Ошибка Groq API: {error_msg}")
+            return f"Ошибка Groq API: {error_msg[:200]}"
+    return "Ошибка: Все ключи исчерпали лимиты"
+
+async def ask_groq_coding(prompt: str, history: list = None) -> str:
+    """Режим Кодинг — Llama 3.3"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["coding"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.2)
+
+async def ask_groq_advice(prompt: str, history: list = None) -> str:
+    """Режим Советы — Qwen"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["advice"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CREATIVE, messages, temperature=0.3)
+
+async def ask_groq_design(prompt: str, history: list = None) -> str:
+    """Режим Оформление — Qwen"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["design"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CREATIVE, messages, temperature=0.3)
+
+async def ask_groq_analytics(prompt: str, history: list = None) -> str:
+    """Режим Аналитика — Llama 3.3"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["analytics"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.2)
+
+async def ask_groq_content(prompt: str, history: list = None) -> str:
+    """Режим Контент — Qwen"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["content"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CREATIVE, messages, temperature=0.4)
+
+async def ask_groq_marketing(prompt: str, history: list = None) -> str:
+    """Режим Маркетинг — Llama 3.3"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["marketing"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.3)
+
+async def ask_groq_features(prompt: str, history: list = None) -> str:
+    """Режим Бот-фичи — Llama 3.3"""
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS["features"]}]
+    if history:
+        messages.extend(history)
+    else:
+        messages.append({"role": "user", "content": prompt})
+    return await ask_groq_with_retry(MODEL_CODING, messages, temperature=0.3)
+
+# Маппинг режимов на функции
+MODE_HANDLERS = {
+    "coding": ask_groq_coding,
+    "advice": ask_groq_advice,
+    "design": ask_groq_design,
+    "analytics": ask_groq_analytics,
+    "content": ask_groq_content,
+    "marketing": ask_groq_marketing,
+    "features": ask_groq_features,
+}
+
+MODE_NAMES = {
+    "coding": "💻 Кодинг",
+    "advice": "📋 Советы по развитию",
+    "design": "🎨 Оформление и дизайн",
+    "analytics": "📊 Аналитика сервера",
+    "content": "📝 Контент и тексты",
+    "marketing": "🛒 Маркетинг и продажи",
+    "features": "🤖 Идеи для бота",
+}
 
 # ================= КОНФИГУРАЦИЯ =================
 CONFIG = {
@@ -94,17 +295,6 @@ def is_owner(interaction: discord.Interaction) -> bool:
     owner_role = interaction.guild.get_role(owner_role_id)
     return owner_role and owner_role in interaction.user.roles
 
-def is_admin(interaction: discord.Interaction) -> bool:
-    config = get_config(interaction.guild_id)
-    if not config:
-        return False
-    admin_role_id = config["roles"].get("admin")
-    if admin_role_id:
-        admin_role = interaction.guild.get_role(admin_role_id)
-        if admin_role and admin_role in interaction.user.roles:
-            return True
-    return is_owner(interaction)
-
 def is_admin_member(member: discord.Member) -> bool:
     guild = member.guild
     config = get_config(guild.id)
@@ -139,6 +329,7 @@ active_orders: set = set()
 user_ticket_cooldown: dict = {}
 TICKET_COOLDOWN_SECONDS = 5
 _shop_update_lock = asyncio.Lock()
+ai_cooldowns = {}
 
 # ================= МУТ =================
 async def mute_member(member: discord.Member, duration_seconds: int, reason: str) -> bool:
@@ -337,9 +528,9 @@ async def _fetch_channel_safe(channel_id: int, retries: int = 5) -> Optional[dis
             ch = await bot.fetch_channel(channel_id)
             if ch:
                 return ch
-        except Exception as e:
-            logger.warning(f"Попытка {attempt + 1}/{retries}: не удалось получить канал {channel_id}: {e}")
-        await asyncio.sleep(3)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
     return None
 
 async def _do_shop_update(guild: discord.Guild):
@@ -1131,7 +1322,6 @@ async def _assign_unverified_roles():
 async def setup_panels():
     logger.info("⏳ setup_panels(): НАЧАЛО")
     
-    # Принудительно обновляем кэш перед отправкой панелей
     try:
         await db.refresh_cache()
         logger.info(f"✅ setup_panels(): кэш обновлён (категорий: {len(db.categories_cache)}, лотов: {len(db.lots_cache)})")
@@ -1181,383 +1371,138 @@ async def setup_panels():
     
     logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
 
-# ================= КОНФИГУРАЦИЯ МОДЕЛЕЙ GROQ =================
-MODEL_ANALYST = "qwen/qwen3-32b"                    # Аналитик
-MODEL_CODER = "llama-3.3-70b-versatile"             # Кодер
-MODEL_REVIEWER = "openai/gpt-oss-120b"              # Ревьюер (GPT OSS)
-MODEL_FINALIZER = "llama-3.3-70b-versatile"         # Финалист
-
-ai_cooldowns = {}
-
-# ================= ФУНКЦИИ ДЛЯ РАБОТЫ С GROQ =================
-
-async def ask_groq_analyst(user_task: str) -> str:
-    """Шаг 1: Аналитик — превращает задачу в технический промт (Qwen)"""
-    if not groq_client:
-        return "Ошибка: GROQ_API_KEY не задан на хостинге"
-    try:
-        prompt = (
-            "Преврати это описание задачи в идеальный technical prompt для написания кода. "
-            "Используй структуру: цель, требования, формат ответа, примеры (если уместно). "
-            f"Выдай только сам промт без лишних вступлений.\n\nЗадача: {user_task}"
-        )
-        response = await asyncio.to_thread(
-            groq_client.chat.completions.create,
-            model=MODEL_ANALYST,  # qwen/qwen3-32b
-            messages=[
-                {"role": "system", "content": "Ты — AI Аналитик. Твоя задача: превратить размышления пользователя в чёткое, структурированное Техническое Задание (ТЗ) для программиста. Пиши на русском, если задача на русском."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.exception("Ошибка Groq Analyst")
-        return f"Ошибка Groq API (Аналитик): {e}"
-
-async def ask_groq_coder(prompt: str, history: list = None) -> str:
-    """Шаг 2 и 4: Кодер и Финалист — пишет и исправляет код (Llama 3.3)"""
-    if not groq_client:
-        return "Ошибка: GROQ_API_KEY не задан на хостинге"
-    try:
-        messages = [
-            {"role": "system", "content": "Ты — Senior Python Developer. Пиши асинхронный код для discord.py с правильной обработкой ошибок и логированием. Следуй PEP 8. Используй async/await везде, где это уместно."}
-        ]
+# ================= ИИ-КОНВЕЙЕР (7 РЕЖИМОВ) =================
+class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
+    def __init__(self):
+        super().__init__(timeout=None)
         
-        if history:
-            for msg in history:
-                role = "user" if msg["role"] == "user" else "assistant"
-                if "parts" in msg:
-                    text = msg["parts"][0]["text"] if msg["parts"] else ""
-                else:
-                    text = msg.get("content", "")
-                messages.append({"role": role, "content": text})
-        else:
-            messages.append({"role": "user", "content": prompt})
-        
-        response = await asyncio.to_thread(
-            groq_client.chat.completions.create,
-            model=MODEL_CODER,  # llama-3.3-70b-versatile
-            messages=messages,
-            temperature=0.2,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.exception("Ошибка Groq Coder")
-        return f"Ошибка Groq API (Кодер): {e}"
-
-async def ask_groq_reviewer(code: str, user_goal: str) -> str:
-    """Шаг 3: Ревьюер — проверяет код на ошибки (GPT-OSS-120b)"""
-    if not groq_client:
-        return "Ошибка: GROQ_API_KEY не задан на хостинге"
-    try:
-        prompt = (
-            f"Ты — Senior Code Reviewer. Проверь этот код на баги, уязвимости и соответствие цели: {user_goal}.\n"
-            f"Если ошибок нет — напиши только 'OK'.\n"
-            f"Если есть ошибки — перечисли их кратко, тезисно, без лишних слов.\n\n"
-            f"```python\n{code}\n```"
-        )
-        response = await asyncio.to_thread(
-            groq_client.chat.completions.create,
-            model=MODEL_REVIEWER,  # openai/gpt-oss-120b
-            messages=[
-                {"role": "system", "content": "Ты — Senior Code Reviewer. Проверяй код строго, но конструктивно. Отвечай кратко."},
-                {"role": "user", "content": prompt}
+        self.mode_select = discord.ui.Select(
+            placeholder="🎯 Выберите режим работы",
+            options=[
+                discord.SelectOption(label="💻 Кодинг", value="coding", description="Написать код для бота", emoji="💻"),
+                discord.SelectOption(label="📋 Советы", value="advice", description="Развитие сервера и сообщества", emoji="📋"),
+                discord.SelectOption(label="🎨 Оформление", value="design", description="Дизайн каналов, роли, эмбеды", emoji="🎨"),
+                discord.SelectOption(label="📊 Аналитика", value="analytics", description="Анализ статистики сервера", emoji="📊"),
+                discord.SelectOption(label="📝 Контент", value="content", description="Тексты, новости, правила", emoji="📝"),
+                discord.SelectOption(label="🛒 Маркетинг", value="marketing", description="Акции, продажи, привлечение", emoji="🛒"),
+                discord.SelectOption(label="🤖 Бот-фичи", value="features", description="Идеи для новых функций", emoji="🤖"),
             ],
-            temperature=0.1,
+            row=0
         )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.exception("Ошибка Groq Reviewer (GPT-OSS)")
-        return f"Ошибка Groq API (Ревьюер): {e}"
-
-# ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДОСТАВКИ РЕЗУЛЬТАТА =================
-async def send_smart_result(user: discord.User, text: str, fname: str, user_choice: str):
-    if ("текст" in user_choice or "text" in user_choice) and len(text) <= 1900:
-        try:
-            await user.send(f"✅ **Ваш готовый результат (Формат: Текст в ЛС):**\n{text}")
-            return True
-        except discord.Forbidden:
-            pass
-
-    if len(text) <= 1900:
-        try:
-            await user.send(f"✅ **Ваш готовый результат (`{fname}`):**\n```\n{text[:1850]}\n```")
-            return True
-        except discord.Forbidden:
-            pass
-
-    try:
-        file_bytes = text.encode('utf-8')
-        file_obj = io.BytesIO(file_bytes)
-        file_obj.name = fname
-        await user.send(
-            f"✅ **Ваш готовый результат отправлен файлом (`{fname}`):**",
-            file=discord.File(file_obj, filename=fname)
+        self.task_input = TextInput(
+            label="Ваш запрос",
+            style=discord.TextStyle.paragraph,
+            placeholder="Опишите, что вам нужно...",
+            max_length=2000,
+            required=True,
+            row=1
         )
-        return True
-    except discord.Forbidden:
-        return False
-    except Exception as e:
-        logger.exception("Ошибка send_smart_result")
-        return False
-
-# ================= БЕЗОПАСНОСТЬ =================
-BANNED_CODE_PATTERNS = [
-    r"discord\.tokens", r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}",
-    r"as_selfbot", r"selfbot",
-    r"nuke_guild", r"delete_channels",
-    r"browser_cookie3", r"roblox_py",
-    r"token_grabber", r"malware"
-]
-
-def is_code_dangerous(text: str) -> bool:
-    for pattern in BANNED_CODE_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-    return False
-
-def get_minimal_guild_context(guild: discord.Guild) -> str:
-    if not guild:
-        return "Контекст сервера недоступен."
+        self.format_input = TextInput(
+            label="Формат ответа (опционально)",
+            style=discord.TextStyle.short,
+            placeholder="текст / код / список / подробно",
+            max_length=50,
+            required=False,
+            row=2
+        )
+        
+        self.add_item(self.mode_select)
+        self.add_item(self.task_input)
+        self.add_item(self.format_input)
     
-    important_ids = {AI_CONVEYOR_CHANNEL_ID, TICKET_CHANNEL_ID}
-    
-    channels_data = [
-        {"id": ch.id, "name": ch.name, "type": str(ch.type)}
-        for ch in guild.channels 
-        if ch.id in important_ids or getattr(ch, "category_id", None) in [TICKET_SUPPORT_CATEGORY_ID, TICKET_ARCHIVE_CATEGORY_ID]
-    ]
-    
-    roles_data = [
-        {"id": r.id, "name": r.name}
-        for r in guild.roles if r.permissions.administrator
-    ]
-    
-    return json.dumps({
-        "guild_name": guild.name,
-        "key_channels": channels_data[:10],
-        "admin_roles": roles_data[:5]
-    }, ensure_ascii=False, indent=2)
-
-# ================= АСИНХРОННАЯ ОЧЕРЕДЬ AI =================
-ai_queue = asyncio.Queue()
-
-class AIJobRequest:
-    def __init__(self, model_name: str, prompt: str, history: list = None):
-        self.model_name = model_name
-        self.prompt = prompt
-        self.history = history
-        self.future = asyncio.get_running_loop().create_future()
-
-async def execute_queued_ai(model_name: str, prompt: str, history: list = None) -> str:
-    job = AIJobRequest(model_name, prompt, history)
-    await ai_queue.put(job)
-    return await job.future
-
-async def ai_worker():
-    logger.info("🤖 Асинхронный ИИ-воркер (Groq) успешно запущен.")
-    while True:
-        job: AIJobRequest = await ai_queue.get()
-        try:
-            if job.model_name == "analyst":
-                res = await ask_groq_analyst(job.prompt)
-            elif job.model_name == "reviewer":
-                res = await ask_groq_reviewer(job.prompt, job.prompt)  # для reviewer нужно передать code и user_goal
-            else:
-                res = await ask_groq_coder(job.prompt, history=job.history, model_override=job.model_name)
-            
-            job.future.set_result(res)
-        except Exception as e:
-            logger.error(f"Ошибка выполнения задачи ИИ внутри очереди: {e}")
-            job.future.set_exception(e)
-        finally:
-            ai_queue.task_done()
-            await asyncio.sleep(1.0)
-
-# ================= МОДАЛКА И ИИ-КОНВЕЙЕР ОБРАБОТКИ ЗАДАЧ =================
-class TaskModal(Modal, title="Постановка задачи для ИИ"):
-    task_input = TextInput(
-        label="Что необходимо разработать?",
-        style=discord.TextStyle.paragraph,
-        placeholder="Опишите задачу максимально подробно (язык, стек, логика)...",
-        max_length=1000,
-        required=True
-    )
-    goal_input = TextInput(
-        label="Цель вопроса (Код / Оформление / Логика)",
-        style=discord.TextStyle.short,
-        placeholder="Например: Готовый код для бота, красивый текст правил сервера, алгоритм...",
-        max_length=150,
-        required=False,
-        default="Готовый и рабочий код"
-    )
-    format_input = TextInput(
-        label="Формат (текст в ЛС / txt / py)",
-        style=discord.TextStyle.short,
-        placeholder="Напишите желаемый формат: текст, txt или py",
-        max_length=50,
-        required=False,
-        default="py"
-    )
-
     async def on_submit(self, interaction: discord.Interaction):
-        user_text = self.task_input.value
-        user_goal = self.goal_input.value or "Готовый и рабочий код"
-        user_format = (self.format_input.value or "py").strip().lower()
+        mode = self.mode_select.values[0] if self.mode_select.values else "coding"
+        user_query = self.task_input.value
+        format_hint = self.format_input.value or ""
 
-        if is_code_dangerous(user_text) or is_code_dangerous(user_goal):
-            return await interaction.response.send_message(
-                "❌ **Запрос отклонен системой безопасности:** Обнаружены опасные паттерны кода (селфботы, нукеры, grabbers).",
-                ephemeral=True
-            )
-
+        # Рейт-лимит
         now = datetime.now()
         u_id = interaction.user.id
         if u_id in ai_cooldowns:
             elapsed = (now - ai_cooldowns[u_id]).total_seconds()
             if elapsed < 60:
-                return await interaction.response.send_message(
+                await interaction.response.send_message(
                     f"⏳ **Рейт-лимит ИИ:** Вы можете отправлять задачи не чаще раза в минуту. Подождите {int(60 - elapsed)} сек.",
                     ephemeral=True
                 )
+                return
         ai_cooldowns[u_id] = now
-
+        
         await interaction.response.defer(ephemeral=True)
         
         embed = discord.Embed(
-            title="🤖 ИИ-Конвейер: Задача принята",
-            description="⏳ **Шаг 1/4:** Задача поставлена в очередь. Аналитик оптимизирует ТЗ...",
+            title=f"🤖 ИИ-Конвейер: {MODE_NAMES.get(mode, mode)}",
+            description="⏳ **Обработка запроса...**\nИИ анализирует и готовит ответ.",
             color=discord.Color.blue()
         )
         status_msg = await interaction.followup.send(embed=embed, ephemeral=True)
-
+        
         try:
-            if interaction.guild:
-                server_context = get_minimal_guild_context(interaction.guild)
-            else:
-                server_context = "Контекст сервера недоступен (вызвано вне сервера)."
-
-            full_analyst_task = (
-                f"КОНТЕКСТ ДИСКОРД СЕРВЕРА:\n{server_context}\n"
-                f"=========================================\n"
-                f"ЗАДАЧА ПОЛЬЗОВАТЕЛЯ: {user_text}\n"
-                f"ГЛАВНАЯ ЦЕЛЬ ЗАПРОСА: {user_goal}\n"
-                f"ЖЕЛАЕМЫЙ ФОРМАТ ОТВЕТА: {user_format}\n\n"
-                f"Сделай упор на цель пользователя ({user_goal}). Если цель связана с оформлением текста — удели внимание структуре сообщений и эмбедам. Если цель 'Код' — сделай упор на чистую архитектуру. Создай идеальный промт для Кодера."
-            )
-
-            gemini_prompt = await ask_groq_analyst(full_analyst_task)
-            if gemini_prompt.startswith("Ошибка"):
+            # Формируем полный запрос с учётом формата
+            full_prompt = user_query
+            if format_hint:
+                full_prompt += f"\n\nФормат ответа: {format_hint}"
+            
+            # Получаем историю диалога
+            history = get_history(interaction.user.id, mode)
+            history_messages = []
+            for msg in history:
+                history_messages.append({"role": msg["role"], "content": msg["content"]})
+            
+            # Вызываем соответствующую функцию
+            handler = MODE_HANDLERS.get(mode, ask_groq_coding)
+            response = await handler(full_prompt, history_messages)
+            
+            if response.startswith("Ошибка"):
                 embed.title = "❌ Сбой конвейера"
-                embed.description = f"Сбой на этапе Аналитика (Генерация ТЗ):\n{gemini_prompt[:1800]}"
+                embed.description = f"{response[:1800]}"
                 embed.color = discord.Color.red()
                 await status_msg.edit(embed=embed)
                 return
-
-            embed.description = "⏳ **Шаг 2/4:** ТЗ сформировано. Groq создает архитектуру решения..."
-            await status_msg.edit(embed=embed)
-
-            initial_code = await ask_groq_coder(f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}")
-            if initial_code.startswith("Ошибка"):
-                embed.title = "❌ Сбой конвейера"
-                embed.description = f"Сбой на этапе создания первичного решения:\n{initial_code[:1800]}"
-                embed.color = discord.Color.red()
-                await status_msg.edit(embed=embed)
-                return
-
-            embed.description = "⏳ **Шаг 3/4:** Первичный код готов. Запуск глубокого ИИ-Ревьюера..."
-            await status_msg.edit(embed=embed)
-
-            full_reviewer_prompt = (
-                f"Вы выступаете в роли Senior Code Reviewer. Оцените предоставленный код.\n\n"
-                f"📋 ЗАДАЧА ПОЛЬЗОВАТЕЛЯ:\n{user_text}\n"
-                f"🎯 ЦЕЛЬ РАЗРАБОТКИ: {user_goal}\n"
-                f"⚙️ ТЕХНИЧЕСКИЕ ОГРАНИЧЕНИЯ: {user_format}\n\n"
-                f"💻 ИСХОДНЫЙ КОД ДЛЯ ПРОВЕРКИ:\n```python\n{initial_code}\n```\n\n"
-                f"Проанализируй код на наличие багов, скрытых уязвимостей, логов, соответствие ТЗ и выведи строгий экспертный вердикт."
-            )
-            gemini_review = await ask_groq_reviewer(full_reviewer_prompt, user_goal)
-            if gemini_review.startswith("Ошибка"):
-                embed.title = "❌ Сбой конвейера"
-                embed.description = f"Сбой на этапе проведения ИИ-Ревью:\n{gemini_review[:1800]}"
-                embed.color = discord.Color.red()
-                await status_msg.edit(embed=embed)
-                return
-
-            # Ранний выход: если ошибок нет
-            if "OK" in gemini_review or "ошибок не найдено" in gemini_review.lower():
-                final_result = initial_code
-                embed.description = "🟢 **Ревью пройдено!** Отдаю готовый код."
+            
+            # Сохраняем в историю
+            add_to_history(interaction.user.id, mode, "user", user_query)
+            add_to_history(interaction.user.id, mode, "assistant", response[:500])  # Сохраняем часть ответа
+            
+            # Отправляем результат
+            if len(response) <= 1900:
+                embed.title = f"✅ {MODE_NAMES.get(mode, mode)}"
+                embed.description = response[:1800]
+                embed.color = discord.Color.green()
                 await status_msg.edit(embed=embed)
             else:
-                embed.description = "🛠️ **Шаг 4/4:** Найдены мелкие недочёты. Идет финальная полировка..."
-                await status_msg.edit(embed=embed)
-
-                history = [
-                    {"role": "user", "parts": [{"text": f"Выполни задачу по техническому заданию. Фокусируйся на цели: {user_goal}. ТЗ:\n{gemini_prompt}"}]},
-                    {"role": "model", "parts": [{"text": initial_code}]},
-                    {"role": "user", "parts": [{"text": f"Твой результат прошел проверку. Вот замечания, которые нужно обязательно учесть и исправить:\n{gemini_review}\n\nВыведи итоговый идеальный результат. Если формат '{user_format}' требует только чистый код — выведи только код. Если просили красивое оформление/текст — выведи отформатированный текст."}]}
-                ]
-                final_result = await ask_groq_coder("", history=history)
-
-            if final_result.startswith("Ошибка"):
-                embed.title = "❌ Сбой конвейера"
-                embed.description = f"Сбой на финальном этапе оптимизации:\n{final_result[:1800]}"
-                embed.color = discord.Color.red()
-                await status_msg.edit(embed=embed)
-                return
-
-            if "py" in user_format:
-                filename = "script.py"
-            elif "txt" in user_format:
-                filename = "result.txt"
-            else:
-                filename = "output.txt"
-
-            delivered = await send_smart_result(interaction.user, final_result, filename, user_format)
-
-            embed.title = "✅ ИИ-Конвейер: Готово!"
-            if delivered:
-                embed.description = f"Результат успешно отправлен в **личные сообщения**!\n\n📄 Файл: `{filename}`\n🎯 Цель: {user_goal}"
-            else:
-                embed.description = f"Не удалось отправить в ЛС (закрыты). Результат прикреплен ниже."
-                embed.color = discord.Color.orange()
-                await status_msg.edit(embed=embed)
-                try:
-                    file_bytes = final_result.encode('utf-8')
-                    file_obj = io.BytesIO(file_bytes)
-                    await interaction.followup.send(
-                        content=f"✅ Ваш результат (`{filename}`):",
-                        file=discord.File(file_obj, filename=filename),
-                        ephemeral=True
-                    )
-                except Exception as e:
-                    logger.exception("Ошибка отправки файла через followup")
-                return
-
-            embed.color = discord.Color.green()
-            await status_msg.edit(embed=embed)
-
+                # Длинный ответ — отправляем файлом
+                filename = f"ai_result_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                file_bytes = response.encode('utf-8')
+                file_obj = io.BytesIO(file_bytes)
+                await interaction.followup.send(
+                    content=f"✅ **{MODE_NAMES.get(mode, mode)}**\nРезультат сохранён в файл:",
+                    file=discord.File(file_obj, filename=filename),
+                    ephemeral=True
+                )
+                await status_msg.delete()
+                
         except Exception as e:
-            logger.exception("Критическая ошибка в TaskModal.on_submit")
+            logger.exception("Ошибка в ИИ-конвейере")
             embed.title = "❌ Внутренняя ошибка"
-            embed.description = f"Произошла непредвиденная ошибка: {str(e)[:500]}"
+            embed.description = f"Произошла ошибка: {str(e)[:500]}"
             embed.color = discord.Color.red()
-            try:
-                await status_msg.edit(embed=embed)
-            except Exception:
-                pass
+            await status_msg.edit(embed=embed)
 
-# ================= ИИ-КОНВЕЙЕР: VIEW И ПАНЕЛЬ =================
-class TaskView(discord.ui.View):
+class AIClearHistoryButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="🗑️ Очистить историю", style=discord.ButtonStyle.danger, custom_id="clear_ai_history")
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Тут нужно определить режим, но для простоты очищаем все режимы
+        for mode in MODE_HANDLERS.keys():
+            clear_history(interaction.user.id, mode)
+        await interaction.response.send_message("✅ История диалогов ИИ очищена!", ephemeral=True)
+
+class AIView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-
-    @discord.ui.button(label="🤖 Запустить ИИ-Конвейер", style=discord.ButtonStyle.blurple, custom_id="start_ai_conveyor")
-    async def start_conveyor(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(TaskModal())
-
+        self.add_item(AIClearHistoryButton())
 
 async def setup_ai_panel():
     channel = await _fetch_channel_safe(AI_CONVEYOR_CHANNEL_ID)
@@ -1577,25 +1522,45 @@ async def setup_ai_panel():
         logger.warning(f"Не удалось очистить канал ИИ-конвейера: {e}")
 
     embed = discord.Embed(
-        title="🤖 ИИ-Конвейер задач",
+        title="🤖 Умный ИИ-Конвейер",
         description=(
-            "**Оптимизированный гибридный конвейер на базе Groq (Llama 4, Qwen, Kimi K2)**\n\n"
-            "🔹 **Шаг 1 (Qwen)** — Аналитик формирует техническое задание\n"
-            "🔹 **Шаг 2 (Kimi K2)** — Кодер строит архитектуру и пишет решение\n"
-            "🔹 **Шаг 3 (Llama 3.3)** — Экспертный Ревьюер проверяет код на уязвимости и баги\n"
-            "🔹 **Шаг 4 (Kimi K2)** — Сборщик исправляет замечания и полирует результат\n\n"
-            "⚠️ *Действует лимит: 1 запуск в 60 секунд. Все запросы обрабатываются через асинхронную безопасную очередь.*\n\n"
-            "**💡 Groq — полностью бесплатно, без карты!**"
+            "**Выберите режим работы и задайте вопрос.**\n\n"
+            "📋 **Доступные режимы:**\n"
+            "• 💻 **Кодинг** — написание кода для бота\n"
+            "• 📋 **Советы** — развитие сервера и сообщества\n"
+            "• 🎨 **Оформление** — дизайн каналов, роли, эмбеды\n"
+            "• 📊 **Аналитика** — анализ статистики сервера\n"
+            "• 📝 **Контент** — тексты, новости, правила\n"
+            "• 🛒 **Маркетинг** — акции, продажи, привлечение\n"
+            "• 🤖 **Бот-фичи** — идеи для новых функций\n\n"
+            "⚡ **Особенности:**\n"
+            "• Каждый режим ведёт отдельную историю диалога\n"
+            "• До 10 сообщений истории на режим\n"
+            "• 4 API ключа в ротации — никаких лимитов\n"
+            "• Модели: Llama 3.3 (код/аналитика) и Qwen (творчество)\n\n"
+            "⏰ **Лимит:** 1 запрос в минуту"
         ),
         color=discord.Color.blurple()
     )
-    embed.set_footer(text="Результат будет отправлен в ваши личные сообщения")
+    embed.set_footer(text="Нажмите на кнопку ниже для создания запроса")
+    
+    view = View()
+    start_button = Button(label="🚀 Запустить ИИ-Конвейер", style=discord.ButtonStyle.green, custom_id="start_ai_panel")
+    
+    async def start_callback(i: discord.Interaction):
+        await i.response.send_modal(AITaskModal())
+    
+    start_button.callback = start_callback
+    view.add_item(start_button)
+    view.add_item(AIClearHistoryButton())
+    
     try:
-        await channel.send(embed=embed, view=TaskView())
-        logger.info("✅ Оптимизированная панель ИИ-конвейера (Groq) отправлена")
+        await channel.send(embed=embed, view=view)
+        logger.info("✅ Панель ИИ-конвейера (7 режимов) отправлена")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки панели ИИ-конвейера: {e}")
 
+# ================= ФОНОВЫЕ ЗАДАЧИ СТАРТА =================
 async def _safe_task(coro, name: str):
     try:
         await coro
@@ -1605,11 +1570,6 @@ async def _safe_task(coro, name: str):
 async def _startup_background():
     logger.info("🔥 _startup_background() начал работу...")
     
-    global _ai_worker_task
-    if '_ai_worker_task' not in globals() or _ai_worker_task.done():
-        _ai_worker_task = bot.loop.create_task(ai_worker())
-        logger.info("✅ Асинхронная ИИ-очередь (Groq) запущена")
-
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
         logger.info("✅ Восстановление из бэкапа завершено")
@@ -1624,7 +1584,7 @@ async def _startup_background():
 
     try:
         await setup_ai_panel()
-        logger.info("✅ Панель ИИ-конвейера (Groq) настроена")
+        logger.info("✅ Панель ИИ-конвейера (7 режимов) настроена")
     except Exception as e:
         logger.exception("❌ Ошибка настройки панели ИИ-конвейера")
     
@@ -1652,7 +1612,7 @@ async def on_ready():
     try:
         bot.add_view(VerifyView())
         bot.add_view(TicketCreateButton())
-        bot.add_view(TaskView())
+        bot.add_view(AIView())
         bot.add_view(OrderCloseView(0, 0, None, None))
         logger.info("✅ Persistent Views зарегистрированы")
     except Exception as e:
@@ -1663,7 +1623,6 @@ async def on_ready():
     asyncio.create_task(_safe_task(cleanup_spam_cache(), "cleanup_spam_cache"))
     logger.info("✅ Фоновые задачи запущены")
 
-    # Синхронизация команд один раз при старте
     try:
         await bot.tree.sync()
         logger.info("✅ Слеш-команды синхронизированы")
@@ -1712,6 +1671,7 @@ async def on_message(message: discord.Message):
                 await mute_member(message.author, 3600, "Запрещённая ссылка")
             except Exception:
                 pass
+            await bot.process_commands(message)
             return
 
     mention_count = len(message.mentions) + len(message.role_mentions)
@@ -1732,6 +1692,7 @@ async def on_message(message: discord.Message):
             await message.delete()
         except Exception:
             pass
+        await bot.process_commands(message)
         return
 
     await bot.process_commands(message)

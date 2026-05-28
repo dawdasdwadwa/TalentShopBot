@@ -102,12 +102,36 @@ async def _executemany_no_lock(query: str, params_list: List[tuple]):
     return await db.executemany(query, params_list)
 
 async def fetchone(query: str, params: tuple = (), retries: int = 5):
-    cursor = await execute(query, params, retries)
-    return await cursor.fetchone()
+    global _initializing
+    while _initializing:
+        await asyncio.sleep(0.05)
+    await ensure_db()
+    for attempt in range(retries):
+        try:
+            async with _db_lock:
+                cursor = await db.execute(query, params)
+                return await cursor.fetchone()
+        except aiosqlite.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
 
 async def fetchall(query: str, params: tuple = (), retries: int = 5):
-    cursor = await execute(query, params, retries)
-    return await cursor.fetchall()
+    global _initializing
+    while _initializing:
+        await asyncio.sleep(0.05)
+    await ensure_db()
+    for attempt in range(retries):
+        try:
+            async with _db_lock:
+                cursor = await db.execute(query, params)
+                return await cursor.fetchall()
+        except aiosqlite.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
 
 async def executemany(query: str, params_list: List[tuple], retries: int = 5):
     global _initializing
@@ -466,15 +490,8 @@ async def get_all_categories() -> Dict[int, Category]:
     if categories_cache:
         return categories_cache
     try:
-        async with asyncio.timeout(10):
-            async with transaction(read_only=True):
-                rows = await _execute_no_lock('SELECT * FROM categories ORDER BY id')
-                cat_rows = await rows.fetchall()
-                lots_rows = await _execute_no_lock('SELECT id, category_id FROM lots')
-                lot_rows = await lots_rows.fetchall()
-    except asyncio.TimeoutError:
-        logger.error("get_all_categories() timed out after 10s — БД не отвечает")
-        return {}
+        cat_rows = await fetchall('SELECT * FROM categories ORDER BY id')
+        lot_rows = await fetchall('SELECT id, category_id FROM lots')
     except Exception as e:
         logger.error(f"get_all_categories() error: {e}")
         return {}
@@ -546,11 +563,12 @@ async def get_all_lots() -> Dict[int, Lot]:
     global lots_cache
     if lots_cache:
         return lots_cache
-    async with transaction(read_only=True):
-        rows = await _execute_no_lock('SELECT * FROM lots')
-        lot_rows = await rows.fetchall()
-        price_rows = await _execute_no_lock('SELECT lot_id, currency, price FROM lot_prices')
-        price_data = await price_rows.fetchall()
+    try:
+        lot_rows = await fetchall('SELECT * FROM lots')
+        price_data = await fetchall('SELECT lot_id, currency, price FROM lot_prices')
+    except Exception as e:
+        logger.error(f"get_all_lots() error: {e}")
+        return {}
     prices_by_lot = {}
     for row in price_data:
         lot_id = row['lot_id']
@@ -601,18 +619,15 @@ async def get_lots_by_category_full(category_id: int) -> List['Lot']:
     global lots_cache
     if lots_cache:
         return [lot for lot in lots_cache.values() if lot.category_id == category_id]
-    async with transaction(read_only=True):
-        rows = await _execute_no_lock('SELECT * FROM lots WHERE category_id = ?', (category_id,))
-        lot_rows = await rows.fetchall()
-        if not lot_rows:
-            return []
-        lot_ids = [r['id'] for r in lot_rows]
-        placeholders = ','.join('?' * len(lot_ids))
-        price_rows_cur = await _execute_no_lock(
-            f'SELECT lot_id, currency, price FROM lot_prices WHERE lot_id IN ({placeholders})',
-            tuple(lot_ids)
-        )
-        price_rows = await price_rows_cur.fetchall()
+    lot_rows = await fetchall('SELECT * FROM lots WHERE category_id = ?', (category_id,))
+    if not lot_rows:
+        return []
+    lot_ids = [r['id'] for r in lot_rows]
+    placeholders = ','.join('?' * len(lot_ids))
+    price_rows = await fetchall(
+        f'SELECT lot_id, currency, price FROM lot_prices WHERE lot_id IN ({placeholders})',
+        tuple(lot_ids)
+    )
     prices_by_lot: dict = {}
     for row in price_rows:
         prices_by_lot.setdefault(row['lot_id'], {})[row['currency']] = row['price']

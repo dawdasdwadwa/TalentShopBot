@@ -1605,75 +1605,114 @@ async def _safe_task(coro, name: str):
 
 async def _startup_background():
     """Все тяжёлые задачи старта выполняются последовательно."""
+    print("🔥 _startup_background() начал работу...")
+    logger.info("🔥 _startup_background() начал работу...")
+    
     # Инициализация и автозапуск фонового воркера для обработки очереди ИИ
     global _ai_worker_task
     if '_ai_worker_task' not in globals() or _ai_worker_task.done():
         _ai_worker_task = bot.loop.create_task(ai_worker())
         logger.info("✅ Асинхронная ИИ-очередь успешно запущена в фоне.")
+        print("✅ Асинхронная ИИ-очередь успешно запущена в фоне.")
 
     # 1. Синхронизация slash-команд
+    print("⏳ Синхронизация slash-команд...")
     try:
         await bot.tree.sync()
         logger.info("✅ Слеш-команды синхронизированы")
-    except Exception:
+        print("✅ Слеш-команды синхронизированы")
+    except Exception as e:
         logger.exception("❌ Ошибка синхронизации команд")
+        print(f"❌ Ошибка синхронизации команд: {e}")
 
     # 2. Восстановление бэкапа магазина
+    print("⏳ Восстановление бэкапа магазина...")
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
         logger.info("✅ Восстановление из бэкапа завершено")
-    except Exception:
+        print("✅ Восстановление из бэкапа завершено")
+    except Exception as e:
         logger.exception("❌ Ошибка восстановления бэкапа")
+        print(f"❌ Ошибка восстановления бэкапа: {e}")
 
     # 3. Панели серверов (верификация, тикеты, магазин, статус)
+    print("⏳ Настройка панелей серверов...")
     logger.info("⏳ Настройка панелей серверов...")
     try:
         await setup_panels()
         logger.info("✅ Панели серверов настроены")
-    except Exception:
+        print("✅ Панели серверов настроены")
+    except Exception as e:
         logger.exception("❌ Ошибка настройки панелей серверов")
+        print(f"❌ Ошибка настройки панелей серверов: {e}")
 
     # 4. Панель ИИ-конвейера
+    print("⏳ Настройка панели ИИ-конвейера...")
     logger.info("⏳ Настройка панели ИИ-конвейера...")
     try:
         await setup_ai_panel()
-    except Exception:
+        logger.info("✅ Панель ИИ-конвейера настроена")
+        print("✅ Панель ИИ-конвейера настроена")
+    except Exception as e:
         logger.exception("❌ Ошибка настройки панели ИИ-конвейера")
+        print(f"❌ Ошибка настройки панели ИИ-конвейера: {e}")
+    
+    print("✅ _startup_background() завершён!")
+    logger.info("✅ _startup_background() завершён!")
 
 
 # ================= СОБЫТИЯ =================
 @bot.event
 async def on_ready():
+    print(f"🔥 on_ready() вызван! Бот: {bot.user}")
+    logger.info(f"🔥 on_ready() вызван! Бот: {bot.user}")
+    
     global _startup_done
     if _startup_done:
         logger.info(f"♻️ Reconnect (RESUME): {bot.user}")
+        print(f"♻️ Reconnect (RESUME): {bot.user}")
         return
     _startup_done = True
 
     # БД инициализируется первой — всё остальное от неё зависит
+    print("⏳ Инициализация БД...")
     try:
         await db.init_db()
         await db.refresh_cache()
         logger.info("✅ БД инициализирована, кэш загружен")
-    except Exception:
+        print("✅ БД инициализирована, кэш загружен")
+    except Exception as e:
         logger.exception("❌ КРИТИЧЕСКАЯ ОШИБКА инициализации БД")
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА инициализации БД: {e}")
+        return
 
     # Persistent Views — ShopView намеренно исключён (динамические custom_id)
-    bot.add_view(VerifyView())
-    bot.add_view(TicketCreateButton())
-    bot.add_view(TaskView())
-    bot.add_view(OrderCloseView(0, 0, None, None))
-    logger.info("✅ Persistent Views зарегистрированы")
+    print("⏳ Регистрация Persistent Views...")
+    try:
+        bot.add_view(VerifyView())
+        bot.add_view(TicketCreateButton())
+        bot.add_view(TaskView())
+        bot.add_view(OrderCloseView(0, 0, None, None))
+        logger.info("✅ Persistent Views зарегистрированы")
+        print("✅ Persistent Views зарегистрированы")
+    except Exception as e:
+        logger.exception("❌ Ошибка регистрации Persistent Views")
+        print(f"❌ Ошибка регистрации Persistent Views: {e}")
 
     # Фоновые задачи — каждая обёрнута в _safe_task для логирования ошибок
+    print("⏳ Запуск фоновых задач...")
     asyncio.create_task(_safe_task(auto_cleanup_tickets(), "auto_cleanup_tickets"))
     asyncio.create_task(_safe_task(auto_update_currency(), "auto_update_currency"))
     asyncio.create_task(_safe_task(cleanup_spam_cache(), "cleanup_spam_cache"))
+    logger.info("✅ Фоновые задачи запущены")
+    print("✅ Фоновые задачи запущены")
 
     # Всё тяжёлое — в одной последовательной задаче
+    print("⏳ Запуск _startup_background()...")
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
 
     logger.info(f"✅ Бот готов: {bot.user}")
+    print(f"✅ Бот готов: {bot.user}")
 
 @bot.event
 async def on_member_join(member: discord.Member):

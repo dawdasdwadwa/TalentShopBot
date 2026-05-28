@@ -1186,7 +1186,8 @@ async def ask_gemini_analyst(user_task: str) -> str:
             model=MODEL,
             contents=prompt,
         )
-        return response.text    except Exception as e:
+        return response.text
+    except Exception as e:
         logger.exception("Ошибка на этапе Аналитика Gemini")
         return f"Ошибка Gemini API (Аналитик): {e}"
 

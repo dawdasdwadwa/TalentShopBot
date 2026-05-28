@@ -13,7 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.getenv("DATABASE_PATH", "/mnt/data/shop_data.db")
+DB_PATH = os.getenv("DATABASE_PATH", "/data/shop_data.db")
 db: Optional[aiosqlite.Connection] = None
 _db_lock = asyncio.Lock()
 _init_lock = asyncio.Lock()
@@ -108,14 +108,19 @@ async def fetchone(query: str, params: tuple = (), retries: int = 5):
     await ensure_db()
     for attempt in range(retries):
         try:
-            async with _db_lock:
-                cursor = await db.execute(query, params)
-                return await cursor.fetchone()
+            cursor = await db.execute(query, params)
+            return await cursor.fetchone()
         except aiosqlite.OperationalError as e:
             if "locked" in str(e).lower() and attempt < retries - 1:
                 await asyncio.sleep(0.2 * (attempt + 1))
                 continue
             raise
+        except Exception as e:
+            if attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+    return None
 
 async def fetchall(query: str, params: tuple = (), retries: int = 5):
     global _initializing
@@ -124,14 +129,19 @@ async def fetchall(query: str, params: tuple = (), retries: int = 5):
     await ensure_db()
     for attempt in range(retries):
         try:
-            async with _db_lock:
-                cursor = await db.execute(query, params)
-                return await cursor.fetchall()
+            cursor = await db.execute(query, params)
+            return await cursor.fetchall()
         except aiosqlite.OperationalError as e:
             if "locked" in str(e).lower() and attempt < retries - 1:
                 await asyncio.sleep(0.2 * (attempt + 1))
                 continue
             raise
+        except Exception as e:
+            if attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+    return []
 
 async def executemany(query: str, params_list: List[tuple], retries: int = 5):
     global _initializing
@@ -275,7 +285,7 @@ async def init_db():
                 print(f"✅ Создана директория БД: {db_dir}")
 
             print(f"⏳ Подключение к БД: {DB_PATH}")
-            db = await aiosqlite.connect(DB_PATH, timeout=20.0)
+            db = await aiosqlite.connect(DB_PATH, timeout=10.0, isolation_level=None)
             db.row_factory = aiosqlite.Row
             print("✅ БД подключена")
             
@@ -457,6 +467,18 @@ async def init_db():
             print("⏳ Коммит...")
             await db.commit()
             print("✅ Коммит завершён")
+
+            # Тестовая запись — проверка прав на запись в volume
+            try:
+                await db.execute("INSERT INTO categories (name, emoji) VALUES ('__test__', '📁')")
+                await db.commit()
+                print("✅ Тестовая запись успешна — volume доступен для записи")
+                await db.execute("DELETE FROM categories WHERE name = '__test__'")
+                await db.commit()
+                print("✅ Тестовая запись удалена")
+            except Exception as e:
+                print(f"❌ Ошибка тестовой записи — возможно, нет прав на запись в volume: {e}")
+                logger.error(f"❌ Ошибка тестовой записи: {e}")
             
             print("⏳ Загрузка кэша...")
             await refresh_cache()
@@ -489,11 +511,16 @@ async def get_all_categories() -> Dict[int, Category]:
     global categories_cache
     if categories_cache:
         return categories_cache
+    print("⏳ get_all_categories(): запрос categories...")
     try:
         cat_rows = await fetchall('SELECT * FROM categories ORDER BY id')
+        print(f"⏳ get_all_categories(): получено {len(cat_rows) if cat_rows else 0} категорий")
+        print("⏳ get_all_categories(): запрос lots...")
         lot_rows = await fetchall('SELECT id, category_id FROM lots')
+        print(f"⏳ get_all_categories(): получено {len(lot_rows) if lot_rows else 0} товаров")
     except Exception as e:
         logger.error(f"get_all_categories() error: {e}")
+        print(f"❌ get_all_categories() error: {e}")
         return {}
     lots_by_category = {}
     for row in lot_rows:
@@ -1208,33 +1235,38 @@ async def restore_from_backup_channel(channel_id: int, bot):
 async def refresh_cache():
     global categories_cache, lots_cache, promos_cache, blacklist_cache, stats_cache, warnings_cache
     print("⏳ refresh_cache(): начало загрузки кэша...")
-    try:
-        print("  ⏳ get_all_categories()...")
-        categories_cache = await get_all_categories()
-        print(f"    ✅ Категории загружены: {len(categories_cache)}")
-        
-        print("  ⏳ get_all_lots()...")
-        lots_cache = await get_all_lots()
-        print(f"    ✅ Товары загружены: {len(lots_cache)}")
-        
-        print("  ⏳ get_all_promos()...")
-        promos_cache = await get_all_promos()
-        print(f"    ✅ Промо загружены: {len(promos_cache)}")
-        
-        print("  ⏳ get_blacklist()...")
-        blacklist_cache = await get_blacklist()
-        print(f"    ✅ Чёрный список загружен: {len(blacklist_cache)}")
-        
-        print("  ⏳ get_all_stats()...")
-        stats_cache = await get_all_stats()
-        print(f"    ✅ Статистика загружена: {len(stats_cache)}")
-        
-        print("  ⏳ get_all_warnings()...")
-        warnings_cache = await get_all_warnings()
-        print(f"    ✅ Предупреждения загружены: {len(warnings_cache)}")
-        
-        print("✅ Кэш полностью загружен!")
-        logger.info("✅ Cache refreshed successfully")
-    except Exception as e:
-        print(f"❌ Ошибка при загрузке кэша: {e}")
-        logger.exception("❌ Ошибка при загрузке кэша")
+
+    async def _safe_load(name, coro, default):
+        try:
+            result = await asyncio.wait_for(coro, timeout=15.0)
+            print(f"    ✅ {name}: {len(result)}")
+            return result
+        except asyncio.TimeoutError:
+            print(f"    ❌ {name}: TIMEOUT — устанавливаем пустой кэш")
+            logger.error(f"refresh_cache: {name} timed out")
+            return default
+        except Exception as e:
+            print(f"    ❌ {name}: {e}")
+            logger.error(f"refresh_cache: {name} error: {e}")
+            return default
+
+    print("  ⏳ get_all_categories()...")
+    categories_cache = await _safe_load("categories", get_all_categories(), {})
+
+    print("  ⏳ get_all_lots()...")
+    lots_cache = await _safe_load("lots", get_all_lots(), {})
+
+    print("  ⏳ get_all_promos()...")
+    promos_cache = await _safe_load("promos", get_all_promos(), {})
+
+    print("  ⏳ get_blacklist()...")
+    blacklist_cache = await _safe_load("blacklist", get_blacklist(), [])
+
+    print("  ⏳ get_all_stats()...")
+    stats_cache = await _safe_load("stats", get_all_stats(), {})
+
+    print("  ⏳ get_all_warnings()...")
+    warnings_cache = await _safe_load("warnings", get_all_warnings(), {})
+
+    print("✅ Кэш полностью загружен!")
+    logger.info("✅ Cache refreshed successfully")

@@ -1181,32 +1181,31 @@ async def setup_panels():
     
     logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
 
-# ================= БЛОК ИНТЕГРАЦИИ GROQ (ИИ-КОНВЕЙЕР) =================
-
-# Конфигурация моделей Groq
-MODEL_ANALYST = "qwen/qwen3-32b"           # Аналитик (60 RPM)
-MODEL_REVIEWER = "llama-3.3-70b-versatile" # Ревьюер (30 RPM)
-MODEL_FINALIZER = "kimi-k2-instruct"       # Финальный сборщик (60 RPM)
+# ================= КОНФИГУРАЦИЯ МОДЕЛЕЙ GROQ =================
+MODEL_ANALYST = "qwen/qwen3-32b"                    # Аналитик
+MODEL_CODER = "llama-3.3-70b-versatile"             # Кодер
+MODEL_REVIEWER = "openai/gpt-oss-120b"              # Ревьюер (GPT OSS)
+MODEL_FINALIZER = "llama-3.3-70b-versatile"         # Финалист
 
 ai_cooldowns = {}
 
 # ================= ФУНКЦИИ ДЛЯ РАБОТЫ С GROQ =================
 
 async def ask_groq_analyst(user_task: str) -> str:
-    """Шаг 1: Аналитик — превращает задачу в технический промт"""
+    """Шаг 1: Аналитик — превращает задачу в технический промт (Qwen)"""
     if not groq_client:
         return "Ошибка: GROQ_API_KEY не задан на хостинге"
     try:
         prompt = (
             "Преврати это описание задачи в идеальный technical prompt для написания кода. "
-            f"Выдай только сам промт без лишних вступлений: {user_task}"
+            "Используй структуру: цель, требования, формат ответа, примеры (если уместно). "
+            f"Выдай только сам промт без лишних вступлений.\n\nЗадача: {user_task}"
         )
-        # Используем sync вызов, но в отдельном потоке чтобы не блокировать
         response = await asyncio.to_thread(
             groq_client.chat.completions.create,
-            model=MODEL_ANALYST,
+            model=MODEL_ANALYST,  # qwen/qwen3-32b
             messages=[
-                {"role": "system", "content": "Ты — AI Аналитик. Твоя задача: превратить размышления пользователя в чёткое, структурированное Техническое Задание (ТЗ) для программиста."},
+                {"role": "system", "content": "Ты — AI Аналитик. Твоя задача: превратить размышления пользователя в чёткое, структурированное Техническое Задание (ТЗ) для программиста. Пиши на русском, если задача на русском."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
@@ -1216,28 +1215,29 @@ async def ask_groq_analyst(user_task: str) -> str:
         logger.exception("Ошибка Groq Analyst")
         return f"Ошибка Groq API (Аналитик): {e}"
 
-async def ask_groq_coder(prompt: str, history: list = None, model_override: str = None) -> str:
-    """Шаг 2 и 4: Кодер — пишет и исправляет код"""
+async def ask_groq_coder(prompt: str, history: list = None) -> str:
+    """Шаг 2 и 4: Кодер и Финалист — пишет и исправляет код (Llama 3.3)"""
     if not groq_client:
         return "Ошибка: GROQ_API_KEY не задан на хостинге"
     try:
-        model = model_override or MODEL_FINALIZER
-        
         messages = [
-            {"role": "system", "content": "Ты — Senior Python Developer. Пиши асинхронный код для discord.py с правильной обработкой ошибок и логированием. Следуй PEP 8."}
+            {"role": "system", "content": "Ты — Senior Python Developer. Пиши асинхронный код для discord.py с правильной обработкой ошибок и логированием. Следуй PEP 8. Используй async/await везде, где это уместно."}
         ]
         
         if history:
             for msg in history:
                 role = "user" if msg["role"] == "user" else "assistant"
-                text = msg["parts"][0]["text"] if "parts" in msg else msg.get("content", "")
+                if "parts" in msg:
+                    text = msg["parts"][0]["text"] if msg["parts"] else ""
+                else:
+                    text = msg.get("content", "")
                 messages.append({"role": role, "content": text})
         else:
             messages.append({"role": "user", "content": prompt})
         
         response = await asyncio.to_thread(
             groq_client.chat.completions.create,
-            model=model,
+            model=MODEL_CODER,  # llama-3.3-70b-versatile
             messages=messages,
             temperature=0.2,
         )
@@ -1247,28 +1247,28 @@ async def ask_groq_coder(prompt: str, history: list = None, model_override: str 
         return f"Ошибка Groq API (Кодер): {e}"
 
 async def ask_groq_reviewer(code: str, user_goal: str) -> str:
-    """Шаг 3: Ревьюер — проверяет код на ошибки"""
+    """Шаг 3: Ревьюер — проверяет код на ошибки (GPT-OSS-120b)"""
     if not groq_client:
         return "Ошибка: GROQ_API_KEY не задан на хостинге"
     try:
         prompt = (
-            f"Проанализируй код на наличие багов, уязвимостей и соответствие цели: {user_goal}.\n"
+            f"Ты — Senior Code Reviewer. Проверь этот код на баги, уязвимости и соответствие цели: {user_goal}.\n"
             f"Если ошибок нет — напиши только 'OK'.\n"
-            f"Если есть ошибки — перечисли их кратко, тезисно.\n\n"
+            f"Если есть ошибки — перечисли их кратко, тезисно, без лишних слов.\n\n"
             f"```python\n{code}\n```"
         )
         response = await asyncio.to_thread(
             groq_client.chat.completions.create,
-            model=MODEL_REVIEWER,
+            model=MODEL_REVIEWER,  # openai/gpt-oss-120b
             messages=[
-                {"role": "system", "content": "Ты — Senior Code Reviewer. Проверяй код строго, но конструктивно."},
+                {"role": "system", "content": "Ты — Senior Code Reviewer. Проверяй код строго, но конструктивно. Отвечай кратко."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
         )
         return response.choices[0].message.content
     except Exception as e:
-        logger.exception("Ошибка Groq Reviewer")
+        logger.exception("Ошибка Groq Reviewer (GPT-OSS)")
         return f"Ошибка Groq API (Ревьюер): {e}"
 
 # ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДОСТАВКИ РЕЗУЛЬТАТА =================

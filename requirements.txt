@@ -1,4 +1,5 @@
 discord.py
-aiosqlite
 aiohttp
-redis
+aiosqlite
+pynacl
+google-genai

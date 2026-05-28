@@ -3,6 +3,7 @@ import asyncio
 import uuid
 import aiohttp
 import os
+import json
 from typing import Optional, Dict, List, Tuple, Any
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
@@ -12,8 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Считываем путь к БД из переменной окружения для Railway Volume, по умолчанию локальный файл
-DB_PATH = os.getenv("DATABASE_PATH", "shop_data.db")
+DB_PATH = os.getenv("DATABASE_PATH", "/mnt/data/shop_data.db")
 db: Optional[aiosqlite.Connection] = None
 _db_lock = asyncio.Lock()
 _init_lock = asyncio.Lock()
@@ -71,11 +71,12 @@ class Promo:
     uses: int = 0
     max_uses: int = 100
 
-# ================= SAFE EXECUTE WITH GLOBAL LOCK =================
+# ================= SAFE EXECUTE =================
 async def execute(query: str, params: tuple = (), retries: int = 5):
     global _initializing
     while _initializing:
         await asyncio.sleep(0.05)
+    # ensure_db вызывается ВНЕ _db_lock, чтобы не было deadlock
     await ensure_db()
     last_error = None
     for attempt in range(retries):
@@ -88,7 +89,7 @@ async def execute(query: str, params: tuple = (), retries: int = 5):
                 last_error = e
                 continue
             raise
-        except Exception as e:
+        except Exception:
             raise
     if last_error:
         raise last_error
@@ -136,34 +137,35 @@ async def transaction(read_only: bool = False):
     sp_name = None
     if is_root:
         await _transaction_lock.acquire()
-        async with _db_lock:
-            _transaction_owner.set(True)
-            if read_only:
-                await db.execute("BEGIN DEFERRED")
-            else:
-                await db.execute("BEGIN IMMEDIATE")
+        # _db_lock не нужен: _transaction_lock уже гарантирует
+        # что только одна транзакция активна в момент времени
+        _transaction_owner.set(True)
+        if read_only:
+            await db.execute("BEGIN DEFERRED")
+        else:
+            await db.execute("BEGIN IMMEDIATE")
     else:
         sp_name = f"sp_{depth}_{uuid.uuid4().hex}"
-        async with _db_lock:
-            await db.execute(f"SAVEPOINT {sp_name}")
+        await db.execute(f"SAVEPOINT {sp_name}")
     token = _transaction_depth.set(depth + 1)
     try:
         yield
-        async with _db_lock:
-            if is_root:
-                await db.commit()
-            else:
-                await db.execute(f"RELEASE SAVEPOINT {sp_name}")
-    except Exception as e:
-        async with _db_lock:
+        # ВАЖНО: не захватываем _db_lock для commit/rollback —
+        # BEGIN IMMEDIATE уже владеет эксклюзивным доступом SQLite,
+        # а повторный lock вызовет deadlock (asyncio.Lock не реентерабельный)
+        if is_root:
+            await db.commit()
+        else:
+            await db.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
             if is_root:
                 await db.rollback()
             else:
-                try:
-                    await db.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
-                    await db.execute(f"RELEASE SAVEPOINT {sp_name}")
-                except:
-                    pass
+                await db.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                await db.execute(f"RELEASE SAVEPOINT {sp_name}")
+        except Exception:
+            pass
         raise
     finally:
         if token:
@@ -174,27 +176,36 @@ async def transaction(read_only: bool = False):
 
 # ================= RECONNECT PROTECTION =================
 async def ensure_db():
+    """Проверяет соединение с БД и переподключается при необходимости.
+    Вызывается ВНЕ _db_lock. Внутри активной транзакции пропускает проверку —
+    соединение гарантированно живо, раз транзакция открыта."""
     global db, _initializing
-    try:
-        if db is not None:
-            async with _db_lock:
-                await db.execute("SELECT 1")
-            return
-    except Exception:
-        pass
-    async with _db_lock:
+    # Если мы внутри транзакции — соединение точно живо, проверять не нужно
+    if _transaction_owner.get():
+        return
+    # Быстрый путь: соединение уже живо
+    if db is not None:
         try:
-            if db is not None:
+            await db.execute("SELECT 1")
+            return
+        except Exception:
+            pass
+    # Медленный путь: нужно переподключиться
+    async with _db_lock:
+        # Двойная проверка после захвата lock
+        if db is not None:
+            try:
                 await db.execute("SELECT 1")
                 return
-        except Exception:
+            except Exception:
+                pass
+        if db is not None:
             try:
                 await db.close()
-            except:
+            except Exception:
                 pass
             db = None
-        if db is None:
-            await init_db()
+        await init_db()
 
 # ================= INIT =================
 async def init_db():
@@ -206,7 +217,6 @@ async def init_db():
             return
         _initializing = True
         try:
-            # Создаем директорию для базы данных, если она указана в пути и еще не существует
             db_dir = os.path.dirname(DB_PATH)
             if db_dir and not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
@@ -214,11 +224,11 @@ async def init_db():
             db = await aiosqlite.connect(DB_PATH, timeout=20.0)
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute("PRAGMA foreign_keys = ON")
-            await db.execute("PRAGMA synchronous = NORMAL")
-            await db.execute("PRAGMA temp_store = MEMORY")
-            await db.execute("PRAGMA mmap_size = 268435456")
-            await db.execute("PRAGMA cache_size = -64000")
+            await db.execute("PRAGMA foreign_keys=ON")
+            await db.execute("PRAGMA synchronous=NORMAL")
+            await db.execute("PRAGMA temp_store=MEMORY")
+            await db.execute("PRAGMA mmap_size=268435456")
+            await db.execute("PRAGMA cache_size=-64000")
 
             await db.execute('''CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -384,13 +394,7 @@ async def init_db():
             )''')
 
             await db.commit()
-
-            categories_cache = {}
-            lots_cache = {}
-            promos_cache = {}
-            blacklist_cache = []
-            stats_cache = {}
-            warnings_cache = {}
+            await refresh_cache()
 
         finally:
             _initializing = False
@@ -697,6 +701,57 @@ async def get_purchases_by_date_range(start_date: str, end_date: str) -> List[di
     )
     return [dict(row) for row in rows] if rows else []
 
+# ================= TICKETS =================
+async def add_ticket(channel_id: int, user_id: int, guild_id: int, voice_channel_id: int = None) -> int:
+    created_at = datetime.now(timezone.utc).isoformat()
+    async with transaction():
+        cursor = await _execute_no_lock(
+            'INSERT INTO tickets (channel_id, voice_channel_id, user_id, guild_id, status, created_at, last_activity) VALUES (?, ?, ?, ?, "open", ?, ?)',
+            (channel_id, voice_channel_id, user_id, guild_id, created_at, created_at)
+        )
+        return cursor.lastrowid
+
+async def get_ticket(channel_id: int) -> Optional[dict]:
+    row = await fetchone('SELECT * FROM tickets WHERE channel_id = ?', (channel_id,))
+    return dict(row) if row else None
+
+async def get_user_active_ticket(user_id: int) -> Optional[dict]:
+    """Проверяет, есть ли у пользователя открытый тикет"""
+    row = await fetchone(
+        'SELECT * FROM tickets WHERE user_id = ? AND status = "open" LIMIT 1',
+        (user_id,)
+    )
+    return dict(row) if row else None
+
+async def close_ticket(channel_id: int):
+    closed_at = datetime.now(timezone.utc).isoformat()
+    async with transaction():
+        await _execute_no_lock(
+            'UPDATE tickets SET status = "closed", closed_at = ? WHERE channel_id = ?',
+            (closed_at, channel_id)
+        )
+
+async def update_ticket_activity(channel_id: int):
+    now = datetime.now(timezone.utc).isoformat()
+    async with transaction():
+        await _execute_no_lock('UPDATE tickets SET last_activity = ? WHERE channel_id = ?', (now, channel_id))
+
+async def delete_ticket_record(channel_id: int):
+    async with transaction():
+        await _execute_no_lock('DELETE FROM tickets WHERE channel_id = ?', (channel_id,))
+
+async def get_expired_tickets() -> List[dict]:
+    now = datetime.now(timezone.utc)
+    closed_cutoff = (now - timedelta(hours=24)).isoformat()
+    inactive_cutoff = (now - timedelta(days=7)).isoformat()
+    rows = await fetchall(
+        '''SELECT * FROM tickets WHERE
+           (status = "closed" AND closed_at <= ?) OR
+           (status = "open" AND last_activity <= ?)''',
+        (closed_cutoff, inactive_cutoff)
+    )
+    return [dict(row) for row in rows] if rows else []
+
 # ================= REVIEWS =================
 async def add_review(user_id: int, seller_id: int, lot_id: int, rating: int, comment: str):
     async with transaction():
@@ -946,49 +1001,6 @@ async def delete_shop_messages(guild_id: int):
     async with transaction():
         await _execute_no_lock('DELETE FROM shop_messages WHERE guild_id = ?', (guild_id,))
 
-# ================= TICKETS =================
-async def add_ticket(channel_id: int, user_id: int, guild_id: int, voice_channel_id: int = None) -> int:
-    created_at = datetime.now(timezone.utc).isoformat()
-    async with transaction():
-        cursor = await _execute_no_lock(
-            'INSERT INTO tickets (channel_id, voice_channel_id, user_id, guild_id, status, created_at, last_activity) VALUES (?, ?, ?, ?, "open", ?, ?)',
-            (channel_id, voice_channel_id, user_id, guild_id, created_at, created_at)
-        )
-        return cursor.lastrowid
-
-async def get_ticket(channel_id: int) -> Optional[dict]:
-    row = await fetchone('SELECT * FROM tickets WHERE channel_id = ?', (channel_id,))
-    return dict(row) if row else None
-
-async def close_ticket(channel_id: int):
-    closed_at = datetime.now(timezone.utc).isoformat()
-    async with transaction():
-        await _execute_no_lock(
-            'UPDATE tickets SET status = "closed", closed_at = ? WHERE channel_id = ?',
-            (closed_at, channel_id)
-        )
-
-async def update_ticket_activity(channel_id: int):
-    now = datetime.now(timezone.utc).isoformat()
-    async with transaction():
-        await _execute_no_lock('UPDATE tickets SET last_activity = ? WHERE channel_id = ?', (now, channel_id))
-
-async def delete_ticket_record(channel_id: int):
-    async with transaction():
-        await _execute_no_lock('DELETE FROM tickets WHERE channel_id = ?', (channel_id,))
-
-async def get_expired_tickets() -> List[dict]:
-    now = datetime.now(timezone.utc)
-    closed_cutoff = (now - timedelta(hours=24)).isoformat()
-    inactive_cutoff = (now - timedelta(days=7)).isoformat()
-    rows = await fetchall(
-        '''SELECT * FROM tickets WHERE
-           (status = "closed" AND closed_at <= ?) OR
-           (status = "open" AND last_activity <= ?)''',
-        (closed_cutoff, inactive_cutoff)
-    )
-    return [dict(row) for row in rows] if rows else []
-
 # ================= LOT TEMPLATES =================
 async def add_lot_template(name: str, price: str, short_description: str, full_description: str,
                             category_id: int, seller_id: int, created_by: int) -> int:
@@ -1063,6 +1075,65 @@ async def convert_price_rub(price_rub: float) -> Dict[str, str]:
     if "EUR" in rates and rates["EUR"]:
         result["EUR"] = f"€{price_rub * rates['EUR']:.2f}"
     return result
+
+# ================= BACKUP & RESTORE =================
+async def restore_from_backup_channel(channel_id: int, bot):
+    """Восстанавливает категории и товары из последнего бэкапа в канале"""
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception as e:
+            logger.error(f"Backup channel {channel_id} not found: {e}")
+            return False
+    
+    try:
+        async for msg in channel.history(limit=50):
+            if not msg.attachments:
+                continue
+            
+            for attachment in msg.attachments:
+                if attachment.filename.endswith('.json') and ('shop_backup_' in attachment.filename or 'scheduled_backup_' in attachment.filename):
+                    content = await attachment.read()
+                    data = json.loads(content.decode('utf-8'))
+                    
+                    categories_data = data.get('categories', {})
+                    lots_data = data.get('lots', {})
+                    
+                    if not categories_data:
+                        continue
+                    
+                    async with transaction():
+                        await _execute_no_lock('DELETE FROM categories')
+                        await _execute_no_lock('DELETE FROM lots')
+                        await _execute_no_lock('DELETE FROM lot_prices')
+                        
+                        for cat_id_str, cat_data in categories_data.items():
+                            await _execute_no_lock(
+                                'INSERT INTO categories (name, emoji, description, image_url) VALUES (?, ?, ?, ?)',
+                                (cat_data['name'], cat_data.get('emoji', '📁'),
+                                 cat_data.get('description'), cat_data.get('image_url'))
+                            )
+                        
+                        for lot_id_str, lot_data in lots_data.items():
+                            await _execute_no_lock(
+                                '''INSERT INTO lots (name, price, short_description, full_description,
+                                   seller_id, category_id, stock, image_url, role_id)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                (lot_data['name'], lot_data.get('price', ''),
+                                 lot_data.get('short_description', ''), lot_data.get('full_description', ''),
+                                 lot_data.get('seller_id', 0), lot_data.get('category_id', 1),
+                                 lot_data.get('stock', 0), lot_data.get('image_url'),
+                                 lot_data.get('role_id'))
+                            )
+                    
+                    await refresh_cache()
+                    logger.info(f"✅ Database restored from {attachment.filename}")
+                    return True
+    except Exception as e:
+        logger.exception(f"Restore failed: {e}")
+    
+    return False
 
 # ================= CACHE =================
 async def refresh_cache():

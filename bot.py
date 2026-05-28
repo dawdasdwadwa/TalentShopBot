@@ -1109,43 +1109,47 @@ async def _assign_unverified_roles():
                     pass
 
 async def setup_panels():
+    logger.info("⏳ setup_panels(): НАЧАЛО")
+    
     # Принудительно обновляем кэш перед отправкой панелей
-    await db.refresh_cache()
+    try:
+        await db.refresh_cache()
+        logger.info(f"✅ setup_panels(): кэш обновлён (категорий: {len(db.categories_cache)}, лотов: {len(db.lots_cache)})")
+    except Exception as e:
+        logger.exception(f"❌ setup_panels(): ошибка обновления кэша: {e}")
+        return
     
     for guild_id, g_config in CONFIG.items():
         guild = bot.get_guild(guild_id)
         if not guild:
-            logger.warning(f"⚠️ Гильдия {guild_id} ({g_config['name']}) не найдена")
+            logger.warning(f"⚠️ Гильдия {guild_id} ({g_config['name']}) не найдена, пропускаем")
             continue
 
         logger.info(f"⏳ Настройка панелей для {g_config['name']}...")
         
-        # Небольшая задержка между отправками
-        await asyncio.sleep(2)
-        
         try:
             await _send_verify_panel(g_config)
-            logger.info(f"  ✅ Верификация — {g_config['name']}")
+            logger.info(f"  ✅ Верификация — канал {g_config.get('verify_channel')} — {g_config['name']}")
         except Exception as e:
             logger.exception(f"  ❌ Ошибка верификации — {g_config['name']}: {e}")
 
         try:
             await _send_ticket_panel_from_config(g_config)
-            logger.info(f"  ✅ Тикеты — {g_config['name']}")
+            logger.info(f"  ✅ Тикеты — канал {g_config.get('ticket_channel')} — {g_config['name']}")
         except Exception as e:
             logger.exception(f"  ❌ Ошибка тикетов — {g_config['name']}: {e}")
 
         if g_config.get("shop_channel"):
             try:
                 await send_or_update_shop(guild)
-                logger.info(f"  ✅ Магазин — {g_config['name']}")
+                logger.info(f"  ✅ Магазин — канал {g_config.get('shop_channel')} — {g_config['name']}")
             except Exception as e:
                 logger.exception(f"  ❌ Ошибка магазина — {g_config['name']}: {e}")
 
         if g_config.get("status_channel"):
             try:
                 await _send_status_channel_panel(guild, g_config)
-                logger.info(f"  ✅ Статус — {g_config['name']}")
+                logger.info(f"  ✅ Статус — канал {g_config.get('status_channel')} — {g_config['name']}")
             except Exception as e:
                 logger.exception(f"  ❌ Ошибка статуса — {g_config['name']}: {e}")
 
@@ -1154,6 +1158,8 @@ async def setup_panels():
         logger.info("✅ Роли unverified назначены")
     except Exception as e:
         logger.exception(f"❌ Ошибка назначения ролей unverified: {e}")
+    
+    logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
 
 # ================= БЛОК ИНТЕГРАЦИИ НЕЙРОСЕТЕЙ (GEMINI SDK) =================
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -1583,13 +1589,7 @@ async def _startup_background():
     global _ai_worker_task
     if '_ai_worker_task' not in globals() or _ai_worker_task.done():
         _ai_worker_task = bot.loop.create_task(ai_worker())
-        logger.info("✅ Асинхронная ИИ-очередь успешно запущена в фоне.")
-
-    try:
-        await bot.tree.sync()
-        logger.info("✅ Слеш-команды синхронизированы")
-    except Exception as e:
-        logger.exception("❌ Ошибка синхронизации команд")
+        logger.info("✅ Асинхронная ИИ-очередь запущена")
 
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
@@ -1626,7 +1626,7 @@ async def on_ready():
     try:
         await db.init_db()
         await db.refresh_cache()
-        logger.info("✅ БД инициализирована, кэш загружен")
+        logger.info(f"✅ БД инициализирована, категорий в кэше: {len(db.categories_cache)}")
     except Exception as e:
         logger.exception("❌ КРИТИЧЕСКАЯ ОШИБКА инициализации БД")
         return
@@ -1645,9 +1645,13 @@ async def on_ready():
     asyncio.create_task(_safe_task(cleanup_spam_cache(), "cleanup_spam_cache"))
     logger.info("✅ Фоновые задачи запущены")
 
-    # Ждём 5 секунд чтобы бот полностью подключился к Gateway
-    await asyncio.sleep(5)
-    
+    # Синхронизация команд один раз при старте
+    try:
+        await bot.tree.sync()
+        logger.info("✅ Слеш-команды синхронизированы")
+    except Exception as e:
+        logger.exception("❌ Ошибка синхронизации команд")
+
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
 
     logger.info(f"✅ Бот готов: {bot.user}")

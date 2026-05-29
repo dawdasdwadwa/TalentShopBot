@@ -174,7 +174,7 @@ async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = 
     if show_think == "hide":
         response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
     
-    # Очищаем markdown для читаемого текста
+    # Очищаем markdown
     response = clean_markdown(response)
     
     return response
@@ -222,7 +222,7 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
         final_prompt = f"{server_info}\n\nВопрос пользователя: {prompt}"
     
     try:
-        # 3. Запрос к Groq
+        # 3. Запрос к Groq — ПРАВИЛЬНЫЙ ВЫЗОВ
         response = await ask_groq_mode(category, final_prompt, history_messages if use_history else None, show_think)
         
         if response.startswith("Ошибка"):
@@ -230,7 +230,7 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
             return
         
         # 4. Оборачиваем ответ в кодовый блок для сохранения форматирования
-        response = await ask_groq_mode(...)  # Уже очищен внутри
+        response = await ask_groq_mode(category, final_prompt, history_messages if use_history else None, show_think)
         
         # 5. Сохраняем в историю (если включено)
         if use_history:

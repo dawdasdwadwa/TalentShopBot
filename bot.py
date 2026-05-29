@@ -150,6 +150,15 @@ async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = 
 async def process_ai_request(interaction: discord.Interaction, category: str, prompt: str, use_history: bool, show_think: str = "hide"):
     user = interaction.user
     
+    # Диагностика
+    logger.info(f"AI Request: user={user.id}, category={category}, prompt={prompt[:100]}...")
+    
+    # Отвечаем только один раз
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+    except:
+        pass
+    
     # 1. Формируем контекст из истории
     history_messages = []
     if use_history:
@@ -170,34 +179,40 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
             await db.add_to_history(user.id, category, "user", prompt)
             await db.add_to_history(user.id, category, "assistant", response)
         
-        # 4. Отправка в публичный канал (Вопрос-Ответ)
+        # 4. Отправка в публичный канал (Вопрос-Ответ) — обернуто в try
         channel_id = CATEGORY_CHANNELS.get(category)
         if channel_id:
             channel = interaction.guild.get_channel(channel_id)
             if channel:
-                embed_chat = discord.Embed(
-                    title=f"{CATEGORY_LABELS.get(category, category)} | Новый диалог",
-                    color=discord.Color.blue(),
-                    timestamp=datetime.now(timezone.utc)
-                )
-                embed_chat.add_field(name=f"👤 {user.display_name}", value=f"**Вопрос:** {prompt[:900]}", inline=False)
-                answer = response[:900] + "..." if len(response) > 900 else response
-                embed_chat.add_field(name="🤖 Ответ ИИ:", value=answer, inline=False)
-                await channel.send(embed=embed_chat)
+                try:
+                    embed_chat = discord.Embed(
+                        title=f"{CATEGORY_LABELS.get(category, category)} | Новый диалог",
+                        color=discord.Color.blue(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed_chat.add_field(name=f"👤 {user.display_name}", value=f"**Вопрос:** {prompt[:900]}", inline=False)
+                    answer = response[:900] + "..." if len(response) > 900 else response
+                    embed_chat.add_field(name="🤖 Ответ ИИ:", value=answer, inline=False)
+                    await channel.send(embed=embed_chat)
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить в канал {channel_id}: {e}")
         
         # 5. Логирование для админов
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            embed_log = discord.Embed(
-                title="📜 Лог запроса ИИ",
-                color=discord.Color.orange(),
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed_log.add_field(name="👤 Пользователь", value=f"{user.mention} ({user.id})", inline=True)
-            embed_log.add_field(name="📁 Категория", value=CATEGORY_LABELS.get(category, category), inline=True)
-            embed_log.add_field(name="🧠 История", value="✅ Да" if use_history else "❌ Нет", inline=True)
-            embed_log.add_field(name="📝 Запрос", value=prompt[:500], inline=False)
-            await log_channel.send(embed=embed_log)
+            try:
+                embed_log = discord.Embed(
+                    title="📜 Лог запроса ИИ",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed_log.add_field(name="👤 Пользователь", value=f"{user.mention} ({user.id})", inline=True)
+                embed_log.add_field(name="📁 Категория", value=CATEGORY_LABELS.get(category, category), inline=True)
+                embed_log.add_field(name="🧠 История", value="✅ Да" if use_history else "❌ Нет", inline=True)
+                embed_log.add_field(name="📝 Запрос", value=prompt[:500], inline=False)
+                await log_channel.send(embed=embed_log)
+            except Exception as e:
+                logger.warning(f"Не удалось отправить в лог-канал: {e}")
         
         # 6. Ответ пользователю
         await interaction.followup.send(
@@ -209,7 +224,10 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
         
     except Exception as e:
         logger.exception("Ошибка в process_ai_request")
-        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+        try:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+        except Exception as e2:
+            logger.error(f"Не удалось отправить сообщение об ошибке: {e2}")
 
 # ================= КОНФИГУРАЦИЯ СЕРВЕРА =================
 CONFIG = {

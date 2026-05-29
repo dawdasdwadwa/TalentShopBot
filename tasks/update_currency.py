@@ -1,7 +1,7 @@
 import asyncio
 import aiohttp
 import logging
-from datetime import db
+import database as db
 
 logger = logging.getLogger(__name__)
 

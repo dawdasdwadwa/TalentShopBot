@@ -125,7 +125,6 @@ async def ask_groq_with_retry(model: str, messages: List[Dict[str, str]], max_re
             
             # Принудительно фиксим кодировку
             try:
-                # Пробуем перекодировать из Windows-1251 в UTF-8
                 text = text.encode('latin1').decode('utf-8')
             except:
                 pass
@@ -142,19 +141,12 @@ async def ask_groq_with_retry(model: str, messages: List[Dict[str, str]], max_re
 
 def clean_markdown(text: str) -> str:
     """Удаляет markdown-разметку, оставляя чистый текст"""
-    # Убираем заголовки ###, ##, # в начале строки
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    # Убираем жирный текст **текст** → текст
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    # Убираем курсив *текст* → текст
     text = re.sub(r'\*(.+?)\*', r'\1', text)
-    # Убираем горизонтальные линии ---, ***, ___
     text = re.sub(r'^[-*_]{3,}$', '', text, flags=re.MULTILINE)
-    # Убираем ссылки [текст](url) → текст
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
-    # Убираем обратные кавычки `код` → код
     text = re.sub(r'`(.+?)`', r'\1', text)
-    # Убираем лишние переносы
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -170,11 +162,9 @@ async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = 
     temperature = 0.4 if mode in ["content", "design", "advice"] else 0.2
     response = await ask_groq_with_retry(model, messages, temperature=temperature)
     
-    # Удаляем think блок
     if show_think == "hide":
         response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
     
-    # Очищаем markdown
     response = clean_markdown(response)
     
     return response
@@ -222,22 +212,19 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
         final_prompt = f"{server_info}\n\nВопрос пользователя: {prompt}"
     
     try:
-        # 3. Запрос к Groq — ПРАВИЛЬНЫЙ ВЫЗОВ
+        # 3. Запрос к Groq
         response = await ask_groq_mode(category, final_prompt, history_messages if use_history else None, show_think)
         
         if response.startswith("Ошибка"):
             await interaction.followup.send(f"❌ {response}", ephemeral=True)
             return
         
-        # 4. Оборачиваем ответ в кодовый блок для сохранения форматирования
-        response = await ask_groq_mode(category, final_prompt, history_messages if use_history else None, show_think)
-        
-        # 5. Сохраняем в историю (если включено)
+        # 4. Сохраняем в историю (если включено)
         if use_history:
             await db.add_to_history(user.id, category, "user", prompt)
             await db.add_to_history(user.id, category, "assistant", response[:3000])
         
-        # 6. Отправка в публичный канал
+        # 5. Отправка в публичный канал
         channel_id = CATEGORY_CHANNELS.get(category)
         channel_mention = f"<#{channel_id}>" if channel_id else "канал с ответами"
         
@@ -256,9 +243,8 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
                         embed_chat.add_field(name="🤖 Ответ ИИ:", value=response, inline=False)
                         await channel.send(content=user.mention, embed=embed_chat)
                     else:
-                        # Длинный ответ — отправляем файлом
                         filename = f"ai_answer_{category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                        file_bytes = response.encode('utf-8')
+                        file_bytes = b'\xef\xbb\xbf' + response.encode('utf-8', errors='replace')
                         file_obj = io.BytesIO(file_bytes)
                         await channel.send(
                             content=f"{user.mention} 📄 **Полный ответ ИИ в файле:**",
@@ -274,7 +260,7 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
                 except Exception as e:
                     logger.warning(f"Не удалось отправить в канал {channel_id}: {e}")
         
-        # 7. Логирование для админов
+        # 6. Логирование для админов
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             try:
@@ -292,7 +278,7 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
             except Exception as e:
                 logger.warning(f"Не удалось отправить в лог-канал: {e}")
         
-        # 8. Короткий ответ пользователю
+        # 7. Короткий ответ пользователю
         await interaction.followup.send(
             f"✅ **{CATEGORY_LABELS.get(category, category)}**\n"
             f"🤖 ИИ ответил! Ваш ответ находится в канале {channel_mention}\n"
@@ -1398,6 +1384,7 @@ async def on_ready():
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
     logger.info(f"✅ Бот готов: {bot.user}")
 
+# ================= ОБРАБОТКА СООБЩЕНИЙ В ИИ-КАНАЛАХ =================
 @bot.event
 async def on_message(message: discord.Message):
     # Пропускаем сообщения от ботов
@@ -1425,19 +1412,18 @@ async def on_message(message: discord.Message):
     # Отправляем индикатор набора текста
     async with message.channel.typing():
         try:
-            # Получаем историю последних 10 сообщений в канале (кроме сообщений бота)
+            # Получаем историю последних 10 сообщений в канале (только от пользователей)
             history_messages = []
             async for msg in message.channel.history(limit=15):
                 if msg.author.bot:
                     continue
-                # Берём только последние 10 сообщений от пользователей
                 if len(history_messages) < 10:
                     history_messages.insert(0, {"role": "user", "content": msg.content})
             
             # Формируем промпт
             final_prompt = message.content
             
-            # Добавляем контекст сервера (опционально)
+            # Добавляем контекст сервера
             use_server_context = True
             if use_server_context and message.guild:
                 server_info = await build_server_context(message.guild)
@@ -1450,7 +1436,7 @@ async def on_message(message: discord.Message):
                 await message.reply(f"❌ {response}")
                 return
             
-            # Сохраняем в БД историю по пользователю (для личной истории, опционально)
+            # Сохраняем в БД историю по пользователю
             await db.add_to_history(message.author.id, category, "user", message.content)
             await db.add_to_history(message.author.id, category, "assistant", response[:3000])
             
@@ -1458,15 +1444,13 @@ async def on_message(message: discord.Message):
             if len(response) <= 1900:
                 await message.reply(response)
             else:
-                # Длинный ответ — отправляем файлом
                 filename = f"ai_answer_{category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                file_bytes = response.encode('utf-8')
+                file_bytes = b'\xef\xbb\xbf' + response.encode('utf-8', errors='replace')
                 file_obj = io.BytesIO(file_bytes)
                 await message.reply(
                     content="📄 **Ответ ИИ (полный):**",
                     file=discord.File(file_obj, filename=filename)
                 )
-                # Короткая версия в embed
                 embed = discord.Embed(
                     title=f"{CATEGORY_LABELS.get(category, category)}",
                     description=response[:500] + "... (полный ответ в файле)",
@@ -1496,45 +1480,6 @@ async def on_member_join(member: discord.Member):
         if welcome_channel:
             embed = discord.Embed(title=f"👋 Добро пожаловать, {member.name}!", description=f"📌 Пройдите верификацию в <#{config['verify_channel']}>", color=discord.Color.green())
             await welcome_channel.send(content=member.mention, embed=embed)
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or is_admin_member(message.author):
-        await bot.process_commands(message)
-        return
-    ticket = await db.get_ticket(message.channel.id)
-    if ticket and ticket['status'] == 'open':
-        await db.update_ticket_activity(message.channel.id)
-    for pattern in BANNED_PATTERNS:
-        if re.search(pattern, message.content.lower()):
-            try:
-                await message.delete()
-                await mute_member(message.author, 3600, "Запрещённая ссылка")
-            except Exception:
-                pass
-            await bot.process_commands(message)
-            return
-    mention_count = len(message.mentions) + len(message.role_mentions)
-    if mention_count >= MENTION_LIMIT:
-        user_id = message.author.id
-        now = datetime.now()
-        if user_id in user_mention_last_reset:
-            if (now - user_mention_last_reset[user_id]).total_seconds() > 60:
-                user_mention_count[user_id] = 1
-            else:
-                user_mention_count[user_id] = user_mention_count.get(user_id, 0) + 1
-        else:
-            user_mention_count[user_id] = 1
-        user_mention_last_reset[user_id] = now
-        duration = get_mute_duration(user_id)
-        try:
-            await mute_member(message.author, duration, f"Спам упоминаниями ({mention_count})")
-            await message.delete()
-        except Exception:
-            pass
-        await bot.process_commands(message)
-        return
-    await bot.process_commands(message)
 
 token = os.getenv('DISCORD_TOKEN')
 if not token:

@@ -203,17 +203,38 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
             channel = interaction.guild.get_channel(channel_id)
             if channel:
                 try:
-                    full_answer = response[:3800] + "..." if len(response) > 3800 else response
                     embed_chat = discord.Embed(
                         title=f"{CATEGORY_LABELS.get(category, category)} | Ответ ИИ",
                         color=discord.Color.blue(),
                         timestamp=datetime.now(timezone.utc)
                     )
                     embed_chat.add_field(name=f"👤 {user.display_name}", value=f"**Вопрос:** {prompt[:900]}", inline=False)
-                    embed_chat.add_field(name="🤖 Ответ ИИ:", value=full_answer, inline=False)
+                    
                     if use_server_context:
                         embed_chat.set_footer(text="🏠 Учтена структура этого сервера")
-                    await channel.send(content=user.mention, embed=embed_chat)
+                    
+                    # Проверяем, влезает ли ответ в поле embed (макс 1024 символа)
+                    if len(response) <= 950:
+                        # Ответ короткий — отправляем embed
+                        embed_chat.add_field(name="🤖 Ответ ИИ:", value=response, inline=False)
+                        await channel.send(content=user.mention, embed=embed_chat)
+                    else:
+                        # Ответ длинный — отправляем файлом + краткий embed
+                        filename = f"ai_answer_{category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                        file_bytes = response.encode('utf-8')
+                        file_obj = io.BytesIO(file_bytes)
+                        
+                        # Отправляем файл с пингом пользователя
+                        await channel.send(
+                            content=f"{user.mention} 📄 **Полный ответ ИИ в файле:**",
+                            file=discord.File(file_obj, filename=filename)
+                        )
+                        
+                        # Отправляем краткую версию в embed
+                        short_answer = response[:500] + "... (полный ответ в файле выше)"
+                        embed_chat.add_field(name="🤖 Ответ ИИ (кратко):", value=short_answer, inline=False)
+                        await channel.send(embed=embed_chat)
+                    
                 except Exception as e:
                     logger.warning(f"Не удалось отправить в канал {channel_id}: {e}")
         

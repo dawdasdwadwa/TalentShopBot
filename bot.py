@@ -50,7 +50,6 @@ else:
 _current_client_index = 0
 
 def get_next_groq_client():
-    """Возвращает следующего Groq клиента (циклически)"""
     global _current_client_index
     if not groq_clients:
         return None
@@ -59,57 +58,30 @@ def get_next_groq_client():
     return client
 
 # ================= КОНФИГУРАЦИЯ МОДЕЛЕЙ =================
-MODEL_CODING = "llama-3.3-70b-versatile"      # Кодинг, Аналитика, Маркетинг, Бот-фичи
-MODEL_CREATIVE = "qwen/qwen3-32b"             # Советы, Оформление, Контент
+MODEL_CODING = "llama-3.3-70b-versatile"
+MODEL_CREATIVE = "qwen/qwen3-32b"
 
-# ================= СИСТЕМНЫЕ ПРОМПТЫ =================
-SYSTEM_PROMPTS = {
-    "coding": (
-        "Ты — Senior Python Developer с 20-летним стажем. "
-        "Специализируешься на discord.py, асинхронном программировании и базах данных. "
-        "Пиши чистый, документированный код с обработкой ошибок. Следуй PEP 8. "
-        "Используй async/await везде, где это уместно. Отвечай на русском языке."
-    ),
-    "advice": (
-        "Ты — эксперт по Discord серверам с 10-летним опытом. "
-        "Помогаешь владельцам серверов развивать сообщество, увеличивать активность и продажи. "
-        "Давай конкретные, практичные советы без воды. Отвечай на русском языке."
-    ),
-    "design": (
-        "Ты — UI/UX дизайнер Discord серверов. "
-        "Специализируешься на структуре каналов, ролевых системах, эмбедах и визуальном оформлении. "
-        "Предлагай красивые и функциональные решения. Отвечай на русском языке."
-    ),
-    "analytics": (
-        "Ты — аналитик данных с опытом работы с Discord серверами. "
-        "На основе предоставленных данных делай выводы, находи узкие места и предлагай оптимизации. "
-        "Отвечай на русском языке."
-    ),
-    "content": (
-        "Ты — копирайтер для Discord серверов. "
-        "Пиши вовлекающие тексты, эмбеды, правила, новости. "
-        "Используй эмодзи и форматирование для красоты. Отвечай на русском языке."
-    ),
-    "marketing": (
-        "Ты — маркетолог Discord магазинов. "
-        "Разрабатывай стратегии продаж, акции, скидки и способы привлечения покупателей. "
-        "Учитывай специфику цифровых товаров. Отвечай на русском языке."
-    ),
-    "features": (
-        "Ты — продакт-менеджер Discord ботов. "
-        "Генерируй идеи новых функций и команд для магазинного бота. "
-        "Оценивай сложность реализации и потенциальную пользу. Отвечай на русском языке."
-    ),
+# ================= КАНАЛЫ ДЛЯ ЛОГОВ И ПУБЛИЧНЫХ ВЫВОДОВ =================
+LOG_CHANNEL_ID = 1509707240792133824  # Канал для логов администратора
+
+CATEGORY_CHANNELS = {
+    "coding": 1509706870141747391,      # #ии-кодинг
+    "advice": 1509706898868277259,      # #ии-советы
+    "design": 1509706937976229928,      # #ии-оформление
+    "analytics": 1509706964551078071,   # #ии-аналитика
+    "content": 1509706993361748078,     # #ии-контент
+    "marketing": 1509707013670834306,   # #ии-маркетинг
+    "features": 1509707039272599602,    # #ии-бот-фичи
 }
 
-MODE_NAMES = {
+CATEGORY_LABELS = {
     "coding": "💻 Кодинг",
-    "advice": "📋 Советы по развитию",
-    "design": "🎨 Оформление и дизайн",
-    "analytics": "📊 Аналитика сервера",
-    "content": "📝 Контент и тексты",
-    "marketing": "🛒 Маркетинг и продажи",
-    "features": "🤖 Идеи для бота",
+    "advice": "💡 Советы",
+    "design": "🎨 Оформление",
+    "analytics": "📊 Аналитика",
+    "content": "📝 Контент",
+    "marketing": "📈 Маркетинг",
+    "features": "🤖 Бот-фичи",
 }
 
 MODE_MODELS = {
@@ -122,37 +94,18 @@ MODE_MODELS = {
     "features": MODEL_CODING,
 }
 
-# Хранилище историй диалогов
-conversation_histories: Dict[str, List[Dict[str, str]]] = {}
-
-def get_history_key(user_id: int, mode: str) -> str:
-    return f"{user_id}_{mode}"
-
-def add_to_history(user_id: int, mode: str, role: str, content: str):
-    key = get_history_key(user_id, mode)
-    if key not in conversation_histories:
-        conversation_histories[key] = []
-    conversation_histories[key].append({"role": role, "content": content[:1000]})
-    if len(conversation_histories[key]) > 10:
-        conversation_histories[key] = conversation_histories[key][-10:]
-
-def get_history_messages(user_id: int, mode: str) -> List[Dict[str, str]]:
-    key = get_history_key(user_id, mode)
-    history = conversation_histories.get(key, [])
-    return [{"role": msg["role"], "content": msg["content"]} for msg in history]
-
-def clear_history(user_id: int, mode: str):
-    key = get_history_key(user_id, mode)
-    if key in conversation_histories:
-        del conversation_histories[key]
+SYSTEM_PROMPTS = {
+    "coding": "Ты — Senior Python Developer с 20-летним стажем. Специализируешься на discord.py, асинхронном программировании и базах данных. Пиши чистый, документированный код с обработкой ошибок. Следуй PEP 8. Используй async/await везде, где это уместно. Отвечай на русском языке.",
+    "advice": "Ты — эксперт по Discord серверам с 10-летним опытом. Помогаешь владельцам серверов развивать сообщество, увеличивать активность и продажи. Давай конкретные, практичные советы без воды. Отвечай на русском языке.",
+    "design": "Ты — UI/UX дизайнер Discord серверов. Специализируешься на структуре каналов, ролевых системах, эмбедах и визуальном оформлении. Предлагай красивые и функциональные решения. Отвечай на русском языке.",
+    "analytics": "Ты — аналитик данных с опытом работы с Discord серверами. На основе предоставленных данных делай выводы, находи узкие места и предлагай оптимизации. Отвечай на русском языке.",
+    "content": "Ты — копирайтер для Discord серверов. Пиши вовлекающие тексты, эмбеды, правила, новости. Используй эмодзи и форматирование для красоты. Отвечай на русском языке.",
+    "marketing": "Ты — маркетолог Discord магазинов. Разрабатывай стратегии продаж, акции, скидки и способы привлечения покупателей. Учитывай специфику цифровых товаров. Отвечай на русском языке.",
+    "features": "Ты — продакт-менеджер Discord ботов. Генерируй идеи новых функций и команд для магазинного бота. Оценивай сложность реализации и потенциальную пользу. Отвечай на русском языке.",
+}
 
 # ================= ФУНКЦИИ РАБОТЫ С GROQ =================
-async def ask_groq_with_retry(
-    model: str,
-    messages: List[Dict[str, str]],
-    max_retries: int = 4,
-    temperature: float = 0.2
-) -> str:
+async def ask_groq_with_retry(model: str, messages: List[Dict[str, str]], max_retries: int = 4, temperature: float = 0.2) -> str:
     for attempt in range(max_retries):
         client = get_next_groq_client()
         if not client:
@@ -171,13 +124,10 @@ async def ask_groq_with_retry(
                 logger.warning(f"429 ошибка на ключе, переключаем... Попытка {attempt + 2}")
                 await asyncio.sleep(1)
                 continue
-            logger.exception(f"Ошибка Groq API: {error_msg}")
             return f"Ошибка Groq API: {error_msg[:200]}"
     return "Ошибка: Все ключи исчерпали лимиты"
 
-import re
-
-async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = None) -> str:
+async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = None, show_think: str = "hide") -> str:
     model = MODE_MODELS.get(mode, MODEL_CODING)
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["coding"])
     
@@ -189,14 +139,79 @@ async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = 
     temperature = 0.4 if mode in ["content", "design", "advice"] else 0.2
     response = await ask_groq_with_retry(model, messages, temperature=temperature)
     
-    # 🔥 Удаляем блок <think>...</think>
-    response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
-    response = re.sub(r'\n{3,}', '\n\n', response)  # Убираем лишние переносы
-    response = response.strip()
+    if show_think == "hide":
+        response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        response = re.sub(r'\n{3,}', '\n\n', response)
+        response = response.strip()
     
     return response
 
-# ================= КОНФИГУРАЦИЯ =================
+# ================= ФУНКЦИЯ ОБРАБОТКИ ИИ-ЗАПРОСА =================
+async def process_ai_request(interaction: discord.Interaction, category: str, prompt: str, use_history: bool, show_think: str = "hide"):
+    user = interaction.user
+    
+    # 1. Формируем контекст из истории
+    history_messages = []
+    if use_history:
+        history_data = await db.get_history(user.id, category, limit=6)
+        for msg in history_data:
+            history_messages.append({"role": msg["role"], "content": msg["content"]})
+    
+    try:
+        # 2. Запрос к Groq
+        response = await ask_groq_mode(category, prompt, history_messages if use_history else None, show_think)
+        
+        if response.startswith("Ошибка"):
+            await interaction.followup.send(f"❌ {response}", ephemeral=True)
+            return
+        
+        # 3. Сохраняем в историю (если включено)
+        if use_history:
+            await db.add_to_history(user.id, category, "user", prompt)
+            await db.add_to_history(user.id, category, "assistant", response)
+        
+        # 4. Отправка в публичный канал (Вопрос-Ответ)
+        channel_id = CATEGORY_CHANNELS.get(category)
+        if channel_id:
+            channel = interaction.guild.get_channel(channel_id)
+            if channel:
+                embed_chat = discord.Embed(
+                    title=f"{CATEGORY_LABELS.get(category, category)} | Новый диалог",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed_chat.add_field(name=f"👤 {user.display_name}", value=f"**Вопрос:** {prompt[:900]}", inline=False)
+                answer = response[:900] + "..." if len(response) > 900 else response
+                embed_chat.add_field(name="🤖 Ответ ИИ:", value=answer, inline=False)
+                await channel.send(embed=embed_chat)
+        
+        # 5. Логирование для админов
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed_log = discord.Embed(
+                title="📜 Лог запроса ИИ",
+                color=discord.Color.orange(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed_log.add_field(name="👤 Пользователь", value=f"{user.mention} ({user.id})", inline=True)
+            embed_log.add_field(name="📁 Категория", value=CATEGORY_LABELS.get(category, category), inline=True)
+            embed_log.add_field(name="🧠 История", value="✅ Да" if use_history else "❌ Нет", inline=True)
+            embed_log.add_field(name="📝 Запрос", value=prompt[:500], inline=False)
+            await log_channel.send(embed=embed_log)
+        
+        # 6. Ответ пользователю
+        await interaction.followup.send(
+            f"✅ **{CATEGORY_LABELS.get(category, category)}**\n"
+            f"📝 **Запрос:** {prompt[:200]}\n"
+            f"🤖 **Ответ:**\n{response[:1800]}",
+            ephemeral=True
+        )
+        
+    except Exception as e:
+        logger.exception("Ошибка в process_ai_request")
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+# ================= КОНФИГУРАЦИЯ СЕРВЕРА =================
 CONFIG = {
     1503041215803822200: {
         "name": "RP CENTER",
@@ -294,8 +309,7 @@ async def mute_member(member: discord.Member, duration_seconds: int, reason: str
     try:
         await member.timeout(timedelta(seconds=duration_seconds), reason=reason)
         return True
-    except Exception as e:
-        logger.exception("Не удалось выдать таймаут")
+    except Exception:
         return False
 
 def get_mute_duration(user_id: int) -> int:
@@ -317,8 +331,8 @@ async def fetch_currency_rates():
                     result = {"UAH": rates.get("UAH", 0), "USD": rates.get("USD", 0), "EUR": rates.get("EUR", 0)}
                     await db.update_currency_rates(result)
                     return result
-    except Exception as e:
-        logger.exception("Ошибка получения курса валют")
+    except Exception:
+        pass
     return {}
 
 async def parse_price_rub(price_str: str) -> Optional[float]:
@@ -331,7 +345,6 @@ async def parse_price_rub(price_str: str) -> Optional[float]:
 class VerifyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="✅ Верифицироваться", style=discord.ButtonStyle.green, custom_id="verify_main_btn")
-
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         config = get_config(interaction.guild_id)
@@ -342,7 +355,6 @@ class VerifyButton(discord.ui.Button):
         customer_role_id = config["roles"].get("customer")
         unverified_role = interaction.guild.get_role(unverified_role_id) if unverified_role_id else None
         customer_role = interaction.guild.get_role(customer_role_id) if customer_role_id else None
-
         if customer_role:
             if unverified_role and unverified_role in interaction.user.roles:
                 await interaction.user.remove_roles(unverified_role)
@@ -362,114 +374,63 @@ class VerifyView(discord.ui.View):
 
 # ================= ТИКЕТЫ ПОДДЕРЖКИ =================
 class TicketModal(discord.ui.Modal, title="Создание тикета поддержки"):
-    subject = discord.ui.TextInput(
-        label="Тема обращения",
-        placeholder="Кратко опишите проблему...",
-        min_length=5,
-        max_length=100,
-        required=True
-    )
-    description = discord.ui.TextInput(
-        label="Описание",
-        placeholder="Подробно опишите вашу проблему...",
-        style=discord.TextStyle.paragraph,
-        min_length=10,
-        max_length=2000,
-        required=True
-    )
-
+    subject = discord.ui.TextInput(label="Тема обращения", placeholder="Кратко опишите проблему...", min_length=5, max_length=100, required=True)
+    description = discord.ui.TextInput(label="Описание", placeholder="Подробно опишите вашу проблему...", style=discord.TextStyle.paragraph, min_length=10, max_length=2000, required=True)
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-
         existing = await db.get_user_active_ticket(interaction.user.id)
         if existing:
-            await interaction.followup.send(
-                f"❌ У вас уже есть активный тикет! Дождитесь его закрытия.\nКанал: <#{existing['channel_id']}>",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"❌ У вас уже есть активный тикет! Дождитесь его закрытия.\nКанал: <#{existing['channel_id']}>", ephemeral=True)
             return
-
         category = interaction.guild.get_channel(TICKET_SUPPORT_CATEGORY_ID)
         if not category:
             await interaction.followup.send("❌ Категория для тикетов не найдена", ephemeral=True)
             return
-
         safe_user = re.sub(r'[^a-zA-Z0-9_-]', '-', interaction.user.name.lower())[:20]
         channel_name = f"ticket-{safe_user}-{interaction.user.id % 10000}"
-
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, embed_links=True),
             interaction.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
-
         admin_role_id = get_config(interaction.guild_id)["roles"].get("admin")
         if admin_role_id:
             admin_role = interaction.guild.get_role(admin_role_id)
             if admin_role:
                 overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_messages=True)
-
-        ticket_channel = await interaction.guild.create_text_channel(
-            channel_name, category=category, overwrites=overwrites,
-            topic=f"Тикет {interaction.user.name} | {self.subject.value[:100]}"
-        )
+        ticket_channel = await interaction.guild.create_text_channel(channel_name, category=category, overwrites=overwrites, topic=f"Тикет {interaction.user.name} | {self.subject.value[:100]}")
         await db.add_ticket(channel_id=ticket_channel.id, user_id=interaction.user.id, guild_id=interaction.guild_id)
-
-        embed = discord.Embed(
-            title="🎫 Тикет поддержки",
-            description=(
-                f"**Создатель:** {interaction.user.mention}\n"
-                f"**Тема:** {self.subject.value}\n"
-                f"**Описание:**\n{self.description.value}\n\n"
-                "Администраторы скоро ответят.\nДля закрытия используйте кнопку ниже."
-            ),
-            color=discord.Color.blue(),
-            timestamp=datetime.now(timezone.utc)
-        )
-
+        embed = discord.Embed(title="🎫 Тикет поддержки", description=f"**Создатель:** {interaction.user.mention}\n**Тема:** {self.subject.value}\n**Описание:**\n{self.description.value}\n\nАдминистраторы скоро ответят.\nДля закрытия используйте кнопку ниже.", color=discord.Color.blue(), timestamp=datetime.now(timezone.utc))
         view = TicketControlView(ticket_channel.id, interaction.user.id)
         await ticket_channel.send(content=f"{interaction.user.mention}", embed=embed, view=view)
         await interaction.followup.send(f"✅ Тикет создан! Перейдите в {ticket_channel.mention}", ephemeral=True)
-
 
 class TicketControlView(discord.ui.View):
     def __init__(self, channel_id: int, user_id: int):
         super().__init__(timeout=None)
         self.channel_id = channel_id
         self.user_id = user_id
-
     @discord.ui.button(label="🔒 Закрыть тикет", style=discord.ButtonStyle.danger, custom_id="close_ticket_btn")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id and not is_admin_member(interaction.user):
             await interaction.response.send_message("❌ Только автор тикета или администратор могут закрыть тикет.", ephemeral=True)
             return
-
         await interaction.response.defer()
         channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
             await interaction.followup.send("❌ Канал не найден", ephemeral=True)
             return
-
         archive_category = interaction.guild.get_channel(TICKET_ARCHIVE_CATEGORY_ID)
         if archive_category:
             await channel.edit(category=archive_category, sync_permissions=False)
             await channel.set_permissions(interaction.user, send_messages=False, read_messages=True)
-
         await db.close_ticket(self.channel_id)
-
-        embed = discord.Embed(
-            title="🔒 Тикет закрыт",
-            description=f"Тикет закрыт {interaction.user.mention}\nКанал будет автоматически удалён через **7 дней**.",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.now(timezone.utc)
-        )
+        embed = discord.Embed(title="🔒 Тикет закрыт", description=f"Тикет закрыт {interaction.user.mention}\nКанал будет автоматически удалён через **7 дней**.", color=discord.Color.dark_red(), timestamp=datetime.now(timezone.utc))
         await channel.send(embed=embed)
-
 
 class TicketCreateButton(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-
     @discord.ui.button(label="🎫 Создать тикет", style=discord.ButtonStyle.green, custom_id="create_ticket_btn")
     async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(TicketModal())
@@ -496,19 +457,15 @@ async def _do_shop_update(guild: discord.Guild):
     channel = await _fetch_channel_safe(config["shop_channel"])
     if not channel:
         return
-
     await db.refresh_cache()
     categories = db.categories_cache
-
     if not categories:
         catalog_embed = discord.Embed(title="TALENT SHOP — КАТАЛОГ ТОВАРОВ", description="В магазине пока нет товаров.", color=discord.Color.from_rgb(0, 0, 0))
     else:
         catalog_embed = discord.Embed(title="TALENT SHOP — КАТАЛОГ ТОВАРОВ", description="Выберите категорию в меню ниже.", color=discord.Color.from_rgb(0, 0, 0))
         catalog_embed.set_footer(text="TALENT SHOP | Нажми для выбора.")
-
     catalog_embed.set_image(url=SHOP_IMAGE_LINK)
     view = ShopView()
-
     try:
         async for msg in channel.history(limit=50):
             if msg.author == bot.user and (msg.embeds and msg.embeds[0].title == "TALENT SHOP — КАТАЛОГ ТОВАРОВ"):
@@ -518,7 +475,6 @@ async def _do_shop_update(guild: discord.Guild):
                     pass
     except Exception as e:
         logger.warning(f"Не удалось очистить канал магазина: {e}")
-
     msg = await channel.send(embed=catalog_embed, view=view)
     await db.set_shop_messages(guild.id, img_id=msg.id)
 
@@ -529,18 +485,15 @@ async def send_or_update_shop(guild: discord.Guild):
 # ================= ПОИСК В МАГАЗИНЕ =================
 class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
     query = discord.ui.TextInput(label="Название товара или категории", placeholder="Введите название...", min_length=2, max_length=100, required=True)
-
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         search_term = self.query.value.strip()
         cats = db.categories_cache
         matched_cats = [c for c in cats.values() if search_term.lower() in c.name.lower()]
         matched_lots = await db.search_lots(search_term)
-
         if not matched_cats and not matched_lots:
             await interaction.followup.send(f"❌ По запросу **{search_term}** ничего не найдено.", ephemeral=True)
             return
-
         embed = discord.Embed(title=f"🔍 Результаты поиска: {search_term}", color=discord.Color.blue())
         if matched_cats:
             cat_text = "\n".join([f"{c.emoji} **{c.name}** — товаров: {len(c.lots)}" for c in matched_cats[:5]])
@@ -548,14 +501,12 @@ class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
         if matched_lots:
             lots_text = "".join([f"{'✅' if lot.stock > 0 else '❌'} **{lot.name}** — {lot.price}\n" for lot in matched_lots[:10]])
             embed.add_field(name="🛒 Товары", value=lots_text, inline=False)
-
         view = discord.ui.View(timeout=120)
         if matched_lots:
             options = [discord.SelectOption(label=f"{lot.name[:50]} - {lot.price[:20]}", value=str(lot.lot_id), emoji="🛒") for lot in matched_lots[:25]]
             select = discord.ui.Select(placeholder="Выбрать товар из результатов", options=options)
             select.callback = lambda i: lot_select_callback(i, select)
             view.add_item(select)
-
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def lot_select_callback(interaction: discord.Interaction, select):
@@ -568,15 +519,9 @@ async def lot_select_callback(interaction: discord.Interaction, select):
     seller = interaction.guild.get_member(lot.seller_id)
     seller_name = seller.display_name if seller else "Продавец"
     stock_text = f"📦 В наличии: {lot.stock}" if lot.stock > 0 else "❌ Нет в наличии"
-
-    embed = discord.Embed(
-        title=f"🛒 {lot.name}",
-        description=f"💰 **{lot.price}**\n{stock_text}\n\n**📝 Описание:**\n{lot.full_description}\n\n**👤 Продавец:** {seller_name}",
-        color=discord.Color.green()
-    )
+    embed = discord.Embed(title=f"🛒 {lot.name}", description=f"💰 **{lot.price}**\n{stock_text}\n\n**📝 Описание:**\n{lot.full_description}\n\n**👤 Продавец:** {seller_name}", color=discord.Color.green())
     if lot.image_url and lot.image_url.startswith(('http://', 'https://')):
         embed.set_thumbnail(url=lot.image_url)
-
     view = LotActionView(lot_id, lot, seller)
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
@@ -587,7 +532,6 @@ class ShopView(discord.ui.View):
         self.page = page
         self.categories_list = list(db.categories_cache.values())
         self.update_items()
-
     def update_items(self):
         self.clear_items()
         if not self.categories_list:
@@ -615,10 +559,8 @@ class ShopView(discord.ui.View):
         search_btn = discord.ui.Button(label="🔍 Поиск", style=discord.ButtonStyle.primary, custom_id="shop_search_btn")
         search_btn.callback = self.search_callback
         self.add_item(search_btn)
-
     async def search_callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ShopSearchModal())
-
     async def category_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
@@ -649,12 +591,10 @@ class ShopView(discord.ui.View):
                 await interaction.followup.send("❌ Ошибка при открытии категории", ephemeral=True)
             except Exception:
                 pass
-
     async def prev_page(self, interaction: discord.Interaction):
         self.page -= 1
         self.update_items()
         await interaction.response.edit_message(view=self)
-
     async def next_page(self, interaction: discord.Interaction):
         self.page += 1
         self.update_items()
@@ -673,7 +613,6 @@ class LotsView(discord.ui.View):
         close_button = discord.ui.Button(label="❌ Закрыть", style=discord.ButtonStyle.danger)
         close_button.callback = self.close_callback
         self.add_item(close_button)
-
     async def lot_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
@@ -685,11 +624,7 @@ class LotsView(discord.ui.View):
             seller = interaction.guild.get_member(lot.seller_id)
             seller_name = seller.display_name if seller else "Продавец"
             stock_text = f"📦 В наличии: {lot.stock}" if lot.stock > 0 else "❌ Нет в наличии"
-            embed = discord.Embed(
-                title=f"🛒 {lot.name}",
-                description=f"💰 **{lot.price}**\n{stock_text}\n\n**📝 Детальное описание:**\n{lot.full_description}\n\n**👤 Продавец:** {seller_name}",
-                color=discord.Color.green()
-            )
+            embed = discord.Embed(title=f"🛒 {lot.name}", description=f"💰 **{lot.price}**\n{stock_text}\n\n**📝 Детальное описание:**\n{lot.full_description}\n\n**👤 Продавец:** {seller_name}", color=discord.Color.green())
             if lot.image_url and lot.image_url.startswith(('http://', 'https://')):
                 embed.set_thumbnail(url=lot.image_url)
             embed.set_footer(text="Выбери действие ниже")
@@ -698,7 +633,6 @@ class LotsView(discord.ui.View):
         except Exception as e:
             logger.exception("Ошибка lot_callback")
             await interaction.followup.send("❌ Ошибка при выборе товара", ephemeral=True)
-
     async def close_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
@@ -719,7 +653,6 @@ class LotActionView(discord.ui.View):
         cancel_button.callback = self.cancel_callback
         self.add_item(buy_button)
         self.add_item(cancel_button)
-
     async def buy_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
@@ -727,34 +660,27 @@ class LotActionView(discord.ui.View):
             if daily_count >= DAILY_PURCHASE_LIMIT:
                 await interaction.followup.send(f"❌ Достигнут дневной лимит покупок ({DAILY_PURCHASE_LIMIT} в день).", ephemeral=True)
                 return
-
             stock = await get_stock(self.lot_id)
             if stock <= 0:
                 await interaction.followup.send("❌ Товар закончился!", ephemeral=True)
                 return
-
             if await has_user_bought(interaction.user.id, self.lot_id):
                 await interaction.followup.send("❌ Вы уже покупали этот товар!", ephemeral=True)
                 return
-
             if await db.is_blacklisted(interaction.user.id):
                 await interaction.followup.send("❌ Вы в чёрном списке и не можете совершать покупки.", ephemeral=True)
                 return
-
             key = (interaction.user.id, self.lot_id)
             if key in active_orders:
                 await interaction.followup.send("⚠️ Заказ уже создаётся, подождите.", ephemeral=True)
                 return
-
             now = datetime.now()
             last = user_ticket_cooldown.get(interaction.user.id)
             if last and (now - last).total_seconds() < TICKET_COOLDOWN_SECONDS:
                 await interaction.followup.send(f"⏳ Подождите {TICKET_COOLDOWN_SECONDS} секунд.", ephemeral=True)
                 return
-
             active_orders.add(key)
             user_ticket_cooldown[interaction.user.id] = now
-
             try:
                 config = get_config(interaction.guild_id)
                 customer_role_id = config["roles"].get("customer") if config else None
@@ -762,15 +688,12 @@ class LotActionView(discord.ui.View):
                 if customer_role and customer_role not in interaction.user.roles:
                     await interaction.followup.send("⚠️ Пройдите верификацию в канале #верификация", ephemeral=True)
                     return
-
                 category = discord.utils.get(interaction.guild.categories, name=TICKET_CATEGORY_NAME)
                 if not category:
                     category = await interaction.guild.create_category(TICKET_CATEGORY_NAME)
-
                 safe_lot = re.sub(r"[^a-zA-Z0-9а-яА-Я_-]", "-", self.lot.name.lower())[:15]
                 safe_user = re.sub(r"[^a-zA-Z0-9_-]", "-", interaction.user.name.lower())[:15]
                 channel_name = f"заказ-{safe_lot}-{safe_user}"
-
                 seller_role_id = config["roles"].get("seller") if config else None
                 admin_role_id = config["roles"].get("admin") if config else None
                 overwrites = {
@@ -788,9 +711,7 @@ class LotActionView(discord.ui.View):
                     admin_role = interaction.guild.get_role(admin_role_id)
                     if admin_role:
                         overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
                 ticket_channel = await interaction.guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
-
                 voice_channel = None
                 try:
                     voice_overwrites = {
@@ -805,13 +726,7 @@ class LotActionView(discord.ui.View):
                     voice_channel = await interaction.guild.create_voice_channel(f"🎙️-{safe_user}", category=category, overwrites=voice_overwrites)
                 except Exception as ve:
                     logger.exception("Не удалось создать голосовой канал")
-
-                await db.add_ticket(
-                    channel_id=ticket_channel.id, user_id=interaction.user.id,
-                    guild_id=interaction.guild_id,
-                    voice_channel_id=voice_channel.id if voice_channel else None
-                )
-
+                await db.add_ticket(channel_id=ticket_channel.id, user_id=interaction.user.id, guild_id=interaction.guild_id, voice_channel_id=voice_channel.id if voice_channel else None)
                 embed = discord.Embed(
                     title="🛒 НОВЫЙ ЗАКАЗ",
                     description=(
@@ -825,36 +740,24 @@ class LotActionView(discord.ui.View):
                 )
                 if voice_channel:
                     embed.add_field(name="🎙️ Голосовой канал", value=voice_channel.mention, inline=False)
-
                 seller_mention = self.seller.mention if self.seller else "Продавец"
                 await ticket_channel.send(content=seller_mention, embed=embed)
                 await ticket_channel.send(f"{interaction.user.mention}, ожидайте ответа продавца.")
-
                 if self.lot.role_id:
                     role = interaction.guild.get_role(self.lot.role_id)
                     if role:
                         await interaction.user.add_roles(role)
-
                 await add_purchase(interaction.user.id, self.lot_id, self.lot.price)
                 await update_stock(self.lot_id, -1)
-
                 price_num = await parse_price_rub(self.lot.price)
                 revenue = int(price_num) if price_num else 0
                 await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=revenue)
-
-                ticket_view = OrderCloseView(
-                    ticket_channel_id=ticket_channel.id,
-                    buyer_id=interaction.user.id,
-                    seller=self.seller,
-                    voice_channel_id=voice_channel.id if voice_channel else None
-                )
+                ticket_view = OrderCloseView(ticket_channel.id, interaction.user.id, self.seller, voice_channel.id if voice_channel else None)
                 await ticket_channel.send("✅ **Для завершения используйте кнопки ниже:**", view=ticket_view)
-
                 try:
                     await interaction.delete_original_response()
                 except Exception:
                     pass
-
                 await interaction.followup.send(f"✅ Заказ создан! Перейдите в {ticket_channel.mention}", ephemeral=True)
             finally:
                 active_orders.discard(key)
@@ -862,7 +765,6 @@ class LotActionView(discord.ui.View):
             logger.exception("Ошибка buy_callback")
             active_orders.discard((interaction.user.id, self.lot_id))
             await interaction.followup.send("❌ Ошибка при создании заказа", ephemeral=True)
-
     async def cancel_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send("❌ Покупка отменена", ephemeral=True)
@@ -871,7 +773,6 @@ class LotActionView(discord.ui.View):
         except Exception:
             pass
 
-
 class OrderCloseView(discord.ui.View):
     def __init__(self, ticket_channel_id: int, buyer_id: int, seller, voice_channel_id: Optional[int] = None):
         super().__init__(timeout=None)
@@ -879,7 +780,6 @@ class OrderCloseView(discord.ui.View):
         self.buyer_id = buyer_id
         self.seller = seller
         self.voice_channel_id = voice_channel_id
-
     @discord.ui.button(label="🔒 Закрыть заказ", style=discord.ButtonStyle.danger, custom_id="close_order_btn")
     async def close_order(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_buyer = interaction.user.id == self.buyer_id
@@ -887,12 +787,10 @@ class OrderCloseView(discord.ui.View):
         if not (is_buyer or is_seller or is_admin_member(interaction.user)):
             await interaction.response.send_message("❌ Только покупатель, продавец или админ могут закрыть заказ.", ephemeral=True)
             return
-
         await interaction.response.defer()
         ticket_channel = interaction.guild.get_channel(self.ticket_channel_id)
         if ticket_channel:
             await db.close_ticket(self.ticket_channel_id)
-
         if self.voice_channel_id:
             vc = interaction.guild.get_channel(self.voice_channel_id)
             if vc:
@@ -900,20 +798,17 @@ class OrderCloseView(discord.ui.View):
                     await vc.delete()
                 except Exception:
                     pass
-
         await interaction.followup.send("🔒 Заказ закрыт. Канал будет удалён через 24 часа.", ephemeral=False)
 
 # ================= СИСТЕМА ОТЗЫВОВ =================
 class ReviewModal(discord.ui.Modal, title="Оставить отзыв"):
     rating = discord.ui.TextInput(label="Оценка (1-5)", placeholder="1-5", min_length=1, max_length=1, required=True)
     comment = discord.ui.TextInput(label="Комментарий", placeholder="Ваш отзыв о товаре/продавце", style=discord.TextStyle.paragraph, max_length=4000, required=True)
-
     def __init__(self, seller, product: str, lot_id: int):
         super().__init__()
         self.seller = seller
         self.product = product
         self.lot_id = lot_id
-
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         if self.rating.value not in '12345':
@@ -921,34 +816,24 @@ class ReviewModal(discord.ui.Modal, title="Оставить отзыв"):
             return
         rating = int(self.rating.value)
         stars = "⭐" * rating + "☆" * (5 - rating)
-
         config = get_config(interaction.guild_id)
         review_channel_id = config.get("review_channel") if config else None
         review_channel = interaction.guild.get_channel(review_channel_id) if review_channel_id else None
         if not review_channel:
             await interaction.followup.send("❌ Канал отзывов не найден.", ephemeral=True)
             return
-
         if self.seller:
             await add_review(interaction.user.id, self.seller.id, self.lot_id, rating, self.comment.value)
-
-        embed = discord.Embed(
-            title="📝 Отзыв о покупке",
-            description=f"**Товар:** {self.product}\n**Оценка:** {stars} ({rating}/5)\n\n**Отзыв:**\n{self.comment.value}",
-            color=discord.Color.gold()
-        )
+        embed = discord.Embed(title="📝 Отзыв о покупке", description=f"**Товар:** {self.product}\n**Оценка:** {stars} ({rating}/5)\n\n**Отзыв:**\n{self.comment.value}", color=discord.Color.gold())
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
         seller_name = self.seller.name if self.seller else "Неизвестен"
         embed.set_footer(text=f"Покупатель: {interaction.user.name} | Продавец: {seller_name}")
         embed.timestamp = datetime.now(timezone.utc)
-
         if self.seller:
             await update_seller_review_catalog(interaction.guild, review_channel, self.seller)
         else:
             await review_channel.send(embed=embed)
-
         await interaction.followup.send("✅ Спасибо за отзыв!", ephemeral=True)
-
         if self.seller:
             try:
                 await self.seller.send(f"📢 {interaction.user.mention} оставил отзыв о товаре **{self.product}**!\nОценка: {stars}")
@@ -958,11 +843,7 @@ class ReviewModal(discord.ui.Modal, title="Оставить отзыв"):
 async def update_seller_review_catalog(guild: discord.Guild, review_channel: discord.TextChannel, seller: discord.Member):
     reviews = await db.get_seller_reviews(seller.id, 20)
     avg_rating = await db.get_seller_rating(seller.id)
-    embed = discord.Embed(
-        title=f"⭐ Отзывы о {seller.display_name}",
-        description=f"**Средний рейтинг:** {'⭐' * round(avg_rating)}{'☆' * (5 - round(avg_rating))} ({avg_rating}/5)\n**Всего отзывов:** {len(reviews)}",
-        color=discord.Color.gold()
-    )
+    embed = discord.Embed(title=f"⭐ Отзывы о {seller.display_name}", description=f"**Средний рейтинг:** {'⭐' * round(avg_rating)}{'☆' * (5 - round(avg_rating))} ({avg_rating}/5)\n**Всего отзывов:** {len(reviews)}", color=discord.Color.gold())
     embed.set_thumbnail(url=seller.avatar.url if seller.avatar else None)
     for rev in reviews[:10]:
         buyer = guild.get_member(rev['user_id'])
@@ -986,13 +867,11 @@ async def build_status_embed(guild: discord.Guild, user: discord.Member) -> disc
     user_reviews = await db.get_user_reviews(user.id)
     stats = await db.get_stats(user.id)
     ref_count = await db.get_referral_count(user.id)
-
     embed = discord.Embed(title=f"👤 Профиль участника: {user.display_name}", color=discord.Color.blue())
     embed.set_thumbnail(url=user.avatar.url if user.avatar else None)
     embed.add_field(name="🛒 Статистика покупок", value=f"Всего покупок: **{len(purchases)}**\nПродаж: **{stats['sales'] if stats else 0}**\nВыручка: **{stats['revenue'] if stats else 0} ₽**", inline=False)
     ref_link = f"https://discord.gg/ref_{user.id}"
     embed.add_field(name="🔗 Реферальная ссылка", value=f"`{ref_link}`\nПривёл: **{ref_count}** пользователей", inline=False)
-
     if purchases:
         purchase_text = ""
         for p in purchases[:5]:
@@ -1027,7 +906,6 @@ async def setup_verify_cmd(interaction: discord.Interaction):
     if not config:
         await interaction.followup.send("❌ Сервер не настроен в CONFIG", ephemeral=True)
         return
-
     await _send_verify_panel(config)
     await interaction.followup.send("✅ Панель верификации успешно обновлена!", ephemeral=True)
 
@@ -1048,17 +926,7 @@ async def setup_ticket_panel(interaction: discord.Interaction):
     async for msg in channel.history(limit=50):
         if msg.author == bot.user:
             await msg.delete()
-    embed = discord.Embed(
-        title="🎫 Служба поддержки",
-        description=(
-            "**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n"
-            "📌 **Правила:**\n• Опишите проблему максимально подробно\n"
-            "• Не создавайте несколько тикетов по одному вопросу\n"
-            "• После решения тикет будет закрыт и удалён через 7 дней\n\n"
-            "⏰ Время ответа: обычно в течение 24 часов"
-        ),
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="🎫 Служба поддержки", description="**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n📌 **Правила:**\n• Опишите проблему максимально подробно\n• Не создавайте несколько тикетов по одному вопросу\n• После решения тикет будет закрыт и удалён через 7 дней\n\n⏰ Время ответа: обычно в течение 24 часов", color=discord.Color.blue())
     embed.set_footer(text="TALENT SHOP — Техническая поддержка")
     await channel.send(embed=embed, view=TicketCreateButton())
     await interaction.followup.send(f"✅ Панель тикетов создана в {channel.mention}", ephemeral=True)
@@ -1148,15 +1016,12 @@ async def _send_verify_panel(guild_config: dict):
     if not channel_id:
         logger.warning(f"❌ Верификация: verify_channel не указан в конфиге {guild_config.get('name')}")
         return
-    
     logger.info(f"⏳ Верификация: ищем канал {channel_id}...")
     channel = await _fetch_channel_safe(channel_id)
     if not channel:
         logger.error(f"❌ Верификация: канал {channel_id} не найден!")
         return
-    
     logger.info(f"✅ Верификация: канал {channel.name} найден, очищаем старые сообщения...")
-    
     try:
         async for msg in channel.history(limit=50):
             if msg.author == bot.user:
@@ -1166,13 +1031,7 @@ async def _send_verify_panel(guild_config: dict):
                     logger.warning(f"Не удалось удалить сообщение: {e}")
     except Exception as e:
         logger.warning(f"Ошибка очистки канала верификации: {e}")
-
-    embed = discord.Embed(
-        title="🔒 Верификация",
-        description="Нажми на кнопку ниже, чтобы получить доступ к серверу.",
-        color=discord.Color.gold()
-    )
-    
+    embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=discord.Color.gold())
     try:
         await channel.send(embed=embed, view=VerifyView())
         logger.info(f"✅ Верификация: сообщение отправлено в канал {channel.name}")
@@ -1186,7 +1045,6 @@ async def _send_ticket_panel_from_config(guild_config: dict):
     channel = await _fetch_channel_safe(channel_id)
     if not channel:
         return
-
     try:
         async for msg in channel.history(limit=50):
             if msg.author == bot.user:
@@ -1196,17 +1054,7 @@ async def _send_ticket_panel_from_config(guild_config: dict):
                     pass
     except Exception:
         pass
-
-    embed = discord.Embed(
-        title="🎫 Служба поддержки",
-        description=(
-            "**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n"
-            "📌 **Правила:**\n• Опишите проблему подробно\n"
-            "• Не создавайте несколько тикетов\n"
-            "• Удаление тикета из архива через 7 дней"
-        ),
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="🎫 Служба поддержки", description="**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n📌 **Правила:**\n• Опишите проблему подробно\n• Не создавайте несколько тикетов\n• Удаление тикета из архива через 7 дней", color=discord.Color.blue())
     embed.set_footer(text=f"{guild_config['name']} — Техническая поддержка")
     try:
         await channel.send(embed=embed, view=TicketCreateButton())
@@ -1220,7 +1068,6 @@ async def _send_status_channel_panel(guild: discord.Guild, guild_config: dict):
     channel = await _fetch_channel_safe(channel_id)
     if not channel:
         return
-
     try:
         async for msg in channel.history(limit=30):
             if msg.author == bot.user:
@@ -1230,18 +1077,12 @@ async def _send_status_channel_panel(guild: discord.Guild, guild_config: dict):
                     pass
     except Exception:
         pass
-
     owner_member = guild.get_member(OWNER_ID) or guild.owner
     if not owner_member:
         return
-
     embed = await build_status_embed(guild, owner_member)
     embed.title = "📊 Текущий статус системы и профиля Администратора"
-    embed.add_field(
-        name="🌐 Статус хостинга",
-        value="🟢 Система запущена и функционирует на **Railway**\n📅 Обновлено: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-        inline=False
-    )
+    embed.add_field(name="🌐 Статус хостинга", value="🟢 Система запущена и функционирует на **Railway**\n📅 Обновлено: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"), inline=False)
     try:
         await channel.send(embed=embed)
     except Exception as e:
@@ -1265,10 +1106,7 @@ async def _assign_unverified_roles():
         for member in guild.members:
             if member.bot or is_admin_member(member):
                 continue
-            has_role = (
-                (customer_role and customer_role in member.roles) or
-                (buyer_role    and buyer_role    in member.roles)
-            )
+            has_role = (customer_role and customer_role in member.roles) or (buyer_role and buyer_role in member.roles)
             if not has_role and unverified_role not in member.roles:
                 try:
                     await member.add_roles(unverified_role)
@@ -1277,220 +1115,142 @@ async def _assign_unverified_roles():
 
 async def setup_panels():
     logger.info("⏳ setup_panels(): НАЧАЛО")
-    
     try:
         await db.refresh_cache()
         logger.info(f"✅ setup_panels(): кэш обновлён (категорий: {len(db.categories_cache)}, лотов: {len(db.lots_cache)})")
     except Exception as e:
         logger.exception(f"❌ setup_panels(): ошибка обновления кэша: {e}")
         return
-    
     for guild_id, g_config in CONFIG.items():
         guild = bot.get_guild(guild_id)
         if not guild:
             logger.warning(f"⚠️ Гильдия {guild_id} ({g_config['name']}) не найдена, пропускаем")
             continue
-
         logger.info(f"⏳ Настройка панелей для {g_config['name']}...")
-        
         try:
             await _send_verify_panel(g_config)
             logger.info(f"  ✅ Верификация — канал {g_config.get('verify_channel')} — {g_config['name']}")
         except Exception as e:
             logger.exception(f"  ❌ Ошибка верификации — {g_config['name']}: {e}")
-
         try:
             await _send_ticket_panel_from_config(g_config)
             logger.info(f"  ✅ Тикеты — канал {g_config.get('ticket_channel')} — {g_config['name']}")
         except Exception as e:
             logger.exception(f"  ❌ Ошибка тикетов — {g_config['name']}: {e}")
-
         if g_config.get("shop_channel"):
             try:
                 await send_or_update_shop(guild)
                 logger.info(f"  ✅ Магазин — канал {g_config.get('shop_channel')} — {g_config['name']}")
             except Exception as e:
                 logger.exception(f"  ❌ Ошибка магазина — {g_config['name']}: {e}")
-
         if g_config.get("status_channel"):
             try:
                 await _send_status_channel_panel(guild, g_config)
                 logger.info(f"  ✅ Статус — канал {g_config.get('status_channel')} — {g_config['name']}")
             except Exception as e:
                 logger.exception(f"  ❌ Ошибка статуса — {g_config['name']}: {e}")
-
     try:
         await _assign_unverified_roles()
         logger.info("✅ Роли unverified назначены")
     except Exception as e:
         logger.exception(f"❌ Ошибка назначения ролей unverified: {e}")
-    
     logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
 
 # ================= ИИ-КОНВЕЙЕР (7 РЕЖИМОВ) =================
 
-class AITaskModal(Modal, title="🤖 ИИ-Конвейер"):
-    def __init__(self, mode: str):
-        super().__init__(timeout=None)
-        self.mode = mode
-        mode_name = MODE_NAMES.get(mode, mode)
-        
-        self.task_input = TextInput(
-            label=f"Ваш запрос ({mode_name})",
-            style=discord.TextStyle.paragraph,
-            placeholder="Опишите, что вам нужно...",
-            max_length=2000,
-            required=True
-        )
-        self.format_input = TextInput(
-            label="Формат ответа (опционально)",
-            style=discord.TextStyle.short,
-            placeholder="текст / код / список / подробно",
-            max_length=50,
-            required=False
-        )
-        self.show_think = discord.ui.Select(
-            placeholder="🧠 Показывать рассуждения ИИ?",
-            options=[
-                discord.SelectOption(label="❌ Скрыть (по умолчанию)", value="hide", description="Только чистый ответ", emoji="🙈"),
-                discord.SelectOption(label="✅ Показать (для экспертов)", value="show", description="Показать ход мыслей модели", emoji="🧠"),
-            ],
-            row=3
-        )
-        
-        self.add_item(self.task_input)
-        self.add_item(self.format_input)
-        self.add_item(self.show_think)
+class AIRequestView(discord.ui.View):
+    def __init__(self, category: str):
+        super().__init__(timeout=60)
+        self.category = category
     
-    async def on_submit(self, interaction: discord.Interaction):
-        user_query = self.task_input.value
-        format_hint = self.format_input.value or ""
+    @discord.ui.select(
+        placeholder="🧠 Учитывать историю прошлых запросов?",
+        options=[
+            discord.SelectOption(label="Да, учитывать контекст", value="yes", emoji="🧠", description="ИИ запомнит прошлые сообщения"),
+            discord.SelectOption(label="Нет, новый чистый запрос", value="no", emoji="🧹", description="Не использовать историю"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        use_history = select.values[0] == "yes"
+        modal = AIInputModal(category=self.category, use_history=use_history)
+        await interaction.response.send_modal(modal)
 
-        # Рейт-лимит
-        now = datetime.now()
-        u_id = interaction.user.id
-        if u_id in ai_cooldowns:
-            elapsed = (now - ai_cooldowns[u_id]).total_seconds()
-            if elapsed < 60:
-                await interaction.response.send_message(
-                    f"⏳ **Рейт-лимит ИИ:** Вы можете отправлять задачи не чаще раза в минуту. Подождите {int(60 - elapsed)} сек.",
-                    ephemeral=True
-                )
-                return
-        ai_cooldowns[u_id] = now
-        
-        await interaction.response.defer(ephemeral=True)
-        
-        embed = discord.Embed(
-            title=f"🤖 ИИ-Конвейер: {MODE_NAMES.get(self.mode, self.mode)}",
-            description="⏳ **Обработка запроса...**\nИИ анализирует и готовит ответ.",
-            color=discord.Color.blue()
-        )
-        status_msg = await interaction.followup.send(embed=embed, ephemeral=True)
-        
-        try:
-            # Формируем полный запрос
-            full_prompt = user_query
-            if format_hint:
-                full_prompt += f"\n\nФормат ответа: {format_hint}"
-            
-            # Получаем историю
-            history = get_history_messages(interaction.user.id, self.mode)
-            
-            # Вызываем ИИ
-            response = await ask_groq_mode(self.mode, full_prompt, history)
-            
-            if response.startswith("Ошибка"):
-                embed.title = "❌ Сбой конвейера"
-                embed.description = f"{response[:1800]}"
-                embed.color = discord.Color.red()
-                await status_msg.edit(embed=embed)
-                return
-            
-            # Сохраняем в историю
-            add_to_history(interaction.user.id, self.mode, "user", user_query)
-            add_to_history(interaction.user.id, self.mode, "assistant", response[:1000])
-            
-            # Отправляем результат
-            if len(response) <= 1900:
-                embed.title = f"✅ {MODE_NAMES.get(self.mode, self.mode)}"
-                embed.description = response[:1800]
-                embed.color = discord.Color.green()
-                await status_msg.edit(embed=embed)
-            else:
-                filename = f"ai_result_{self.mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                file_bytes = response.encode('utf-8')
-                file_obj = io.BytesIO(file_bytes)
-                await interaction.followup.send(
-                    content=f"✅ **{MODE_NAMES.get(self.mode, self.mode)}**\nРезультат сохранён в файл:",
-                    file=discord.File(file_obj, filename=filename),
-                    ephemeral=True
-                )
-                await status_msg.delete()
-                
-        except Exception as e:
-            logger.exception("Ошибка в ИИ-конвейере")
-            embed.title = "❌ Внутренняя ошибка"
-            embed.description = f"Произошла ошибка: {str(e)[:500]}"
-            embed.color = discord.Color.red()
-            await status_msg.edit(embed=embed)
+class AIInputModal(discord.ui.Modal):
+    def __init__(self, category: str, use_history: bool):
+        super().__init__(title=f"🤖 {CATEGORY_LABELS.get(category, category)}")
+        self.category = category
+        self.use_history = use_history
+        self.prompt_input = TextInput(label="Ваш запрос", style=discord.TextStyle.paragraph, placeholder="Введите ваш запрос здесь...", required=True, max_length=2000)
+        self.add_item(self.prompt_input)
+    async def on_submit(self, interaction: discord.Interaction):
+        await process_ai_request(interaction, self.category, self.prompt_input.value, self.use_history, show_think="hide")
+
+class ClearHistoryCategoryView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+    @discord.ui.select(
+        placeholder="🗑️ Что вы хотите очистить?",
+        options=[
+            discord.SelectOption(label="💥 Очистить ВСЮ историю", value="all", emoji="💥"),
+            discord.SelectOption(label="💻 Кодинг", value="coding", emoji="💻"),
+            discord.SelectOption(label="💡 Советы", value="advice", emoji="💡"),
+            discord.SelectOption(label="🎨 Оформление", value="design", emoji="🎨"),
+            discord.SelectOption(label="📊 Аналитика", value="analytics", emoji="📊"),
+            discord.SelectOption(label="📝 Контент", value="content", emoji="📝"),
+            discord.SelectOption(label="📈 Маркетинг", value="marketing", emoji="📈"),
+            discord.SelectOption(label="🤖 Бот-фичи", value="features", emoji="🤖"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        chosen = select.values[0]
+        label = "всю историю" if chosen == "all" else f"историю из {CATEGORY_LABELS.get(chosen, chosen)}"
+        confirm_view = ClearConfirmView(category=chosen)
+        await interaction.response.edit_message(content=f"⚠️ **Вы уверены, что хотите удалить {label}?**", view=confirm_view)
+
+class ClearConfirmView(discord.ui.View):
+    def __init__(self, category: str):
+        super().__init__(timeout=60)
+        self.category = category
+    @discord.ui.button(label="🗑️ Да, удалить!", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await db.clear_user_history(interaction.user.id, self.category if self.category != "all" else None)
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(f"🗑️ {interaction.user.mention} очистил историю ИИ (категория: {self.category})")
+        await interaction.response.edit_message(content="✅ История успешно удалена!", view=None)
+    @discord.ui.button(label="❌ Отмена", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="❌ Действие отменено.", view=None)
 
 class ModeSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
-    
-    @discord.ui.button(label="💻 Кодинг", style=discord.ButtonStyle.primary, custom_id="mode_coding")
-    async def mode_coding(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("coding"))
-    
-    @discord.ui.button(label="📋 Советы", style=discord.ButtonStyle.primary, custom_id="mode_advice")
-    async def mode_advice(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("advice"))
-    
-    @discord.ui.button(label="🎨 Оформление", style=discord.ButtonStyle.primary, custom_id="mode_design")
-    async def mode_design(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("design"))
-    
-    @discord.ui.button(label="📊 Аналитика", style=discord.ButtonStyle.primary, custom_id="mode_analytics")
-    async def mode_analytics(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("analytics"))
-    
-    @discord.ui.button(label="📝 Контент", style=discord.ButtonStyle.primary, custom_id="mode_content")
-    async def mode_content(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("content"))
-    
-    @discord.ui.button(label="🛒 Маркетинг", style=discord.ButtonStyle.primary, custom_id="mode_marketing")
-    async def mode_marketing(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("marketing"))
-    
-    @discord.ui.button(label="🤖 Бот-фичи", style=discord.ButtonStyle.primary, custom_id="mode_features")
-    async def mode_features(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AITaskModal("features"))
-    
-    @discord.ui.button(label="🗑️ Очистить историю", style=discord.ButtonStyle.danger, custom_id="clear_history")
-    async def clear_history(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Очищаем историю для всех режимов
-        for mode in MODE_NAMES.keys():
-            clear_history(interaction.user.id, mode)
-        await interaction.response.send_message("✅ История диалогов ИИ очищена!", ephemeral=True)
+        options = [discord.SelectOption(label=label, value=value) for value, label in CATEGORY_LABELS.items()]
+        options.append(discord.SelectOption(label="🗑️ Очистить историю", value="clear_history", emoji="🗑️"))
+        self.select = discord.ui.Select(placeholder="🎯 Выберите режим работы", options=options, min_values=1, max_values=1)
+        self.select.callback = self.select_callback
+        self.add_item(self.select)
+    async def select_callback(self, interaction: discord.Interaction):
+        selected = self.select.values[0]
+        if selected == "clear_history":
+            view = ClearHistoryCategoryView()
+            await interaction.response.edit_message(content="🗑️ **Выберите, что очистить:**", view=view)
+        else:
+            view = AIRequestView(category=selected)
+            await interaction.response.edit_message(content=f"🎯 **{CATEGORY_LABELS.get(selected, selected)}**\n\nВыберите, нужно ли учитывать историю прошлых сообщений:", view=view)
 
 class StartAIButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="🚀 Выбрать режим", style=discord.ButtonStyle.success, custom_id="start_ai")
-    
+        super().__init__(label="🚀 Запустить ИИ-Конвейер", style=discord.ButtonStyle.success, custom_id="start_ai")
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "🎯 **Выберите режим работы ИИ-конвейера:**",
-            view=ModeSelectView(),
-            ephemeral=True
-        )
+        view = ModeSelectView()
+        await interaction.response.send_message("🎯 **Выберите режим работы ИИ-конвейера:**\n\n📋 Каждый режим ведёт отдельную историю диалога.\n🧠 Вы сможете выбрать, учитывать историю или нет.", view=view, ephemeral=True)
 
 async def setup_ai_panel():
     channel = await _fetch_channel_safe(AI_CONVEYOR_CHANNEL_ID)
     if not channel:
         logger.warning(f"⚠️ Канал ИИ-конвейера {AI_CONVEYOR_CHANNEL_ID} не найден")
         return
-
     try:
         async for msg in channel.history(limit=30):
             if msg.author == bot.user:
@@ -1501,18 +1261,17 @@ async def setup_ai_panel():
                     pass
     except Exception as e:
         logger.warning(f"Не удалось очистить канал ИИ-конвейера: {e}")
-
     embed = discord.Embed(
         title="🤖 Умный ИИ-Конвейер",
         description=(
             "**Выберите режим работы, нажав на кнопку ниже.**\n\n"
             "📋 **Доступные режимы:**\n"
             "• 💻 **Кодинг** — написание кода для бота\n"
-            "• 📋 **Советы** — развитие сервера и сообщества\n"
+            "• 💡 **Советы** — развитие сервера и сообщества\n"
             "• 🎨 **Оформление** — дизайн каналов, роли, эмбеды\n"
             "• 📊 **Аналитика** — анализ статистики сервера\n"
             "• 📝 **Контент** — тексты, новости, правила\n"
-            "• 🛒 **Маркетинг** — акции, продажи, привлечение\n"
+            "• 📈 **Маркетинг** — акции, продажи, привлечение\n"
             "• 🤖 **Бот-фичи** — идеи для новых функций\n\n"
             "⚡ **Особенности:**\n"
             "• Каждый режим ведёт отдельную историю диалога\n"
@@ -1524,10 +1283,8 @@ async def setup_ai_panel():
         color=discord.Color.blurple()
     )
     embed.set_footer(text="Нажмите на кнопку ниже для выбора режима")
-    
     view = View()
     view.add_item(StartAIButton())
-    
     try:
         await channel.send(embed=embed, view=view)
         logger.info("✅ Панель ИИ-конвейера (7 режимов) отправлена")
@@ -1543,38 +1300,32 @@ async def _safe_task(coro, name: str):
 
 async def _startup_background():
     logger.info("🔥 _startup_background() начал работу...")
-    
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
         logger.info("✅ Восстановление из бэкапа завершено")
     except Exception as e:
         logger.exception("❌ Ошибка восстановления бэкапа")
-
     try:
         await setup_panels()
         logger.info("✅ Панели серверов настроены")
     except Exception as e:
         logger.exception("❌ Ошибка настройки панелей серверов")
-
     try:
         await setup_ai_panel()
         logger.info("✅ Панель ИИ-конвейера (7 режимов) настроена")
     except Exception as e:
         logger.exception("❌ Ошибка настройки панели ИИ-конвейера")
-    
     logger.info("✅ _startup_background() завершён!")
 
 # ================= СОБЫТИЯ =================
 @bot.event
 async def on_ready():
     logger.info(f"🔥 on_ready() вызван! Бот: {bot.user}")
-    
     global _startup_done
     if _startup_done:
         logger.info(f"♻️ Reconnect (RESUME): {bot.user}")
         return
     _startup_done = True
-
     try:
         await db.init_db()
         await db.refresh_cache()
@@ -1582,7 +1333,6 @@ async def on_ready():
     except Exception as e:
         logger.exception("❌ КРИТИЧЕСКАЯ ОШИБКА инициализации БД")
         return
-
     try:
         bot.add_view(VerifyView())
         bot.add_view(TicketCreateButton())
@@ -1591,20 +1341,16 @@ async def on_ready():
         logger.info("✅ Persistent Views зарегистрированы")
     except Exception as e:
         logger.exception("❌ Ошибка регистрации Persistent Views")
-
     asyncio.create_task(_safe_task(auto_cleanup_tickets(), "auto_cleanup_tickets"))
     asyncio.create_task(_safe_task(auto_update_currency(), "auto_update_currency"))
     asyncio.create_task(_safe_task(cleanup_spam_cache(), "cleanup_spam_cache"))
     logger.info("✅ Фоновые задачи запущены")
-
     try:
         await bot.tree.sync()
         logger.info("✅ Слеш-команды синхронизированы")
     except Exception as e:
         logger.exception("❌ Ошибка синхронизации команд")
-
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
-
     logger.info(f"✅ Бот готов: {bot.user}")
 
 @bot.event
@@ -1621,11 +1367,7 @@ async def on_member_join(member: discord.Member):
     if welcome_channel_id:
         welcome_channel = member.guild.get_channel(welcome_channel_id)
         if welcome_channel:
-            embed = discord.Embed(
-                title=f"👋 Добро пожаловать, {member.name}!",
-                description=f"📌 **Как пройти верификацию:**\n1. Перейдите в <#{config['verify_channel']}>\n2. Нажмите «✅ Верифицироваться»",
-                color=discord.Color.green()
-            )
+            embed = discord.Embed(title=f"👋 Добро пожаловать, {member.name}!", description=f"📌 **Как пройти верификацию:**\n1. Перейдите в <#{config['verify_channel']}>\n2. Нажмите «✅ Верифицироваться»", color=discord.Color.green())
             await welcome_channel.send(content=member.mention, embed=embed)
 
 @bot.event
@@ -1633,11 +1375,9 @@ async def on_message(message: discord.Message):
     if message.author.bot or is_admin_member(message.author):
         await bot.process_commands(message)
         return
-
     ticket = await db.get_ticket(message.channel.id)
     if ticket and ticket['status'] == 'open':
         await db.update_ticket_activity(message.channel.id)
-
     for pattern in BANNED_PATTERNS:
         if re.search(pattern, message.content.lower()):
             try:
@@ -1647,7 +1387,6 @@ async def on_message(message: discord.Message):
                 pass
             await bot.process_commands(message)
             return
-
     mention_count = len(message.mentions) + len(message.role_mentions)
     if mention_count >= MENTION_LIMIT:
         user_id = message.author.id
@@ -1668,7 +1407,6 @@ async def on_message(message: discord.Message):
             pass
         await bot.process_commands(message)
         return
-
     await bot.process_commands(message)
 
 token = os.getenv('DISCORD_TOKEN')

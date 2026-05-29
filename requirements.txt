@@ -2,4 +2,4 @@ discord.py
 aiohttp
 aiosqlite
 pynacl
-google-genai
+groq

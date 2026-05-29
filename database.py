@@ -13,7 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.getenv("DATABASE_PATH", "/mnt/data/shop_data.db")
+DB_PATH = os.getenv("DATABASE_PATH", "/data/shop_data.db")
 db: Optional[aiosqlite.Connection] = None
 _db_lock = asyncio.Lock()
 _init_lock = asyncio.Lock()
@@ -76,7 +76,6 @@ async def execute(query: str, params: tuple = (), retries: int = 5):
     global _initializing
     while _initializing:
         await asyncio.sleep(0.05)
-    # ensure_db вызывается ВНЕ _db_lock, чтобы не было deadlock
     await ensure_db()
     last_error = None
     for attempt in range(retries):
@@ -102,12 +101,46 @@ async def _executemany_no_lock(query: str, params_list: List[tuple]):
     return await db.executemany(query, params_list)
 
 async def fetchone(query: str, params: tuple = (), retries: int = 5):
-    cursor = await execute(query, params, retries)
-    return await cursor.fetchone()
+    global _initializing
+    while _initializing:
+        await asyncio.sleep(0.05)
+    await ensure_db()
+    for attempt in range(retries):
+        try:
+            cursor = await db.execute(query, params)
+            return await cursor.fetchone()
+        except aiosqlite.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+        except Exception as e:
+            if attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+    return None
 
 async def fetchall(query: str, params: tuple = (), retries: int = 5):
-    cursor = await execute(query, params, retries)
-    return await cursor.fetchall()
+    global _initializing
+    while _initializing:
+        await asyncio.sleep(0.05)
+    await ensure_db()
+    for attempt in range(retries):
+        try:
+            cursor = await db.execute(query, params)
+            return await cursor.fetchall()
+        except aiosqlite.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+        except Exception as e:
+            if attempt < retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+    return []
 
 async def executemany(query: str, params_list: List[tuple], retries: int = 5):
     global _initializing
@@ -136,9 +169,11 @@ async def transaction(read_only: bool = False):
     token = None
     sp_name = None
     if is_root:
-        await _transaction_lock.acquire()
-        # _db_lock не нужен: _transaction_lock уже гарантирует
-        # что только одна транзакция активна в момент времени
+        try:
+            await asyncio.wait_for(_transaction_lock.acquire(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.error("❌ transaction(): _transaction_lock TIMEOUT")
+            raise
         _transaction_owner.set(True)
         if read_only:
             await db.execute("BEGIN DEFERRED")
@@ -150,21 +185,18 @@ async def transaction(read_only: bool = False):
     token = _transaction_depth.set(depth + 1)
     try:
         yield
-        # ВАЖНО: не захватываем _db_lock для commit/rollback —
-        # BEGIN IMMEDIATE уже владеет эксклюзивным доступом SQLite,
-        # а повторный lock вызовет deadlock (asyncio.Lock не реентерабельный)
         if is_root:
             await db.commit()
         else:
             await db.execute(f"RELEASE SAVEPOINT {sp_name}")
-    except Exception:
+    except Exception as e:
         try:
             if is_root:
                 await db.rollback()
             else:
                 await db.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
                 await db.execute(f"RELEASE SAVEPOINT {sp_name}")
-        except Exception:
+        except Exception as e2:
             pass
         raise
     finally:
@@ -176,23 +208,16 @@ async def transaction(read_only: bool = False):
 
 # ================= RECONNECT PROTECTION =================
 async def ensure_db():
-    """Проверяет соединение с БД и переподключается при необходимости.
-    Вызывается ВНЕ _db_lock. Внутри активной транзакции пропускает проверку —
-    соединение гарантированно живо, раз транзакция открыта."""
     global db, _initializing
-    # Если мы внутри транзакции — соединение точно живо, проверять не нужно
     if _transaction_owner.get():
         return
-    # Быстрый путь: соединение уже живо
     if db is not None:
         try:
             await db.execute("SELECT 1")
             return
         except Exception:
             pass
-    # Медленный путь: нужно переподключиться
     async with _db_lock:
-        # Двойная проверка после захвата lock
         if db is not None:
             try:
                 await db.execute("SELECT 1")
@@ -393,12 +418,61 @@ async def init_db():
                 updated_at TEXT
             )''')
 
+            # ========== НОВАЯ ТАБЛИЦА ДЛЯ ИИ-ИСТОРИИ ==========
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS ai_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            ''')
+            await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_user_cat ON ai_history(user_id, category)')
+
             await db.commit()
             await refresh_cache()
 
+        except Exception as e:
+            logger.exception("❌ Ошибка инициализации БД")
         finally:
             _initializing = False
 
+# ================= ИИ-ИСТОРИЯ (НОВЫЕ ФУНКЦИИ) =================
+async def add_to_history(user_id: int, category: str, role: str, content: str):
+    """Добавляет сообщение в историю ИИ по категории"""
+    async with transaction():
+        await _execute_no_lock(
+            'INSERT INTO ai_history (user_id, category, role, content) VALUES (?, ?, ?, ?)',
+            (user_id, category, role, content[:3000])
+        )
+        # Оставляем только последние 20 сообщений на категорию
+        await _execute_no_lock('''
+            DELETE FROM ai_history WHERE id IN (
+                SELECT id FROM ai_history 
+                WHERE user_id = ? AND category = ? 
+                ORDER BY created_at DESC 
+                LIMIT -1 OFFSET 20
+            )
+        ''', (user_id, category))
+
+async def get_history(user_id: int, category: str, limit: int = 6) -> List[Dict[str, str]]:
+    """Возвращает историю для ИИ в формате [{role, content}] от старых к новым"""
+    rows = await fetchall(
+        'SELECT role, content FROM ai_history WHERE user_id = ? AND category = ? ORDER BY created_at ASC LIMIT ?',
+        (user_id, category, limit)
+    )
+    return [{"role": row['role'], "content": row['content']} for row in rows] if rows else []
+
+async def clear_user_history(user_id: int, category: str = None):
+    """Очищает историю: либо конкретную категорию, либо всё"""
+    if category and category != "all":
+        await _execute_no_lock('DELETE FROM ai_history WHERE user_id = ? AND category = ?', (user_id, category))
+    else:
+        await _execute_no_lock('DELETE FROM ai_history WHERE user_id = ?', (user_id,))
+
+# ================= ОСТАЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ) =================
 async def close_db():
     global db, _initializing
     while _initializing:
@@ -415,16 +489,16 @@ async def close_db():
             pass
         db = None
 
-# ================= CATEGORIES =================
 async def get_all_categories() -> Dict[int, Category]:
     global categories_cache
     if categories_cache:
         return categories_cache
-    async with transaction(read_only=True):
-        rows = await _execute_no_lock('SELECT * FROM categories ORDER BY id')
-        cat_rows = await rows.fetchall()
-        lots_rows = await _execute_no_lock('SELECT id, category_id FROM lots')
-        lot_rows = await lots_rows.fetchall()
+    try:
+        cat_rows = await fetchall('SELECT * FROM categories ORDER BY id')
+        lot_rows = await fetchall('SELECT id, category_id FROM lots')
+    except Exception as e:
+        logger.error(f"get_all_categories() error: {e}")
+        return {}
     lots_by_category = {}
     for row in lot_rows:
         cat_id = row['category_id']
@@ -440,6 +514,7 @@ async def get_all_categories() -> Dict[int, Category]:
         for row in cat_rows
     }
     categories_cache = result
+    logger.info(f"get_all_categories(): загружено {len(result)} категорий")
     return result
 
 async def get_category(category_id: int) -> Optional[Category]:
@@ -487,16 +562,16 @@ async def delete_category(category_id: int):
         categories_cache = {}
         lots_cache = {}
 
-# ================= LOTS =================
 async def get_all_lots() -> Dict[int, Lot]:
     global lots_cache
     if lots_cache:
         return lots_cache
-    async with transaction(read_only=True):
-        rows = await _execute_no_lock('SELECT * FROM lots')
-        lot_rows = await rows.fetchall()
-        price_rows = await _execute_no_lock('SELECT lot_id, currency, price FROM lot_prices')
-        price_data = await price_rows.fetchall()
+    try:
+        lot_rows = await fetchall('SELECT * FROM lots')
+        price_data = await fetchall('SELECT lot_id, currency, price FROM lot_prices')
+    except Exception as e:
+        logger.error(f"get_all_lots() error: {e}")
+        return {}
     prices_by_lot = {}
     for row in price_data:
         lot_id = row['lot_id']
@@ -547,18 +622,15 @@ async def get_lots_by_category_full(category_id: int) -> List['Lot']:
     global lots_cache
     if lots_cache:
         return [lot for lot in lots_cache.values() if lot.category_id == category_id]
-    async with transaction(read_only=True):
-        rows = await _execute_no_lock('SELECT * FROM lots WHERE category_id = ?', (category_id,))
-        lot_rows = await rows.fetchall()
-        if not lot_rows:
-            return []
-        lot_ids = [r['id'] for r in lot_rows]
-        placeholders = ','.join('?' * len(lot_ids))
-        price_rows_cur = await _execute_no_lock(
-            f'SELECT lot_id, currency, price FROM lot_prices WHERE lot_id IN ({placeholders})',
-            tuple(lot_ids)
-        )
-        price_rows = await price_rows_cur.fetchall()
+    lot_rows = await fetchall('SELECT * FROM lots WHERE category_id = ?', (category_id,))
+    if not lot_rows:
+        return []
+    lot_ids = [r['id'] for r in lot_rows]
+    placeholders = ','.join('?' * len(lot_ids))
+    price_rows = await fetchall(
+        f'SELECT lot_id, currency, price FROM lot_prices WHERE lot_id IN ({placeholders})',
+        tuple(lot_ids)
+    )
     prices_by_lot: dict = {}
     for row in price_rows:
         prices_by_lot.setdefault(row['lot_id'], {})[row['currency']] = row['price']
@@ -645,7 +717,6 @@ async def move_lot_to_category(lot_id: int, new_category_id: int):
         lots_cache = {}
         categories_cache = {}
 
-# ================= STOCK =================
 async def update_stock(lot_id: int, quantity: int = -1):
     global lots_cache, categories_cache
     async with transaction():
@@ -660,7 +731,6 @@ async def get_stock(lot_id: int) -> int:
     row = await fetchone('SELECT stock FROM lots WHERE id = ?', (lot_id,))
     return row['stock'] if row else 0
 
-# ================= PURCHASES =================
 async def add_purchase(user_id: int, lot_id: int, price: str) -> int:
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     async with transaction():
@@ -701,7 +771,6 @@ async def get_purchases_by_date_range(start_date: str, end_date: str) -> List[di
     )
     return [dict(row) for row in rows] if rows else []
 
-# ================= TICKETS =================
 async def add_ticket(channel_id: int, user_id: int, guild_id: int, voice_channel_id: int = None) -> int:
     created_at = datetime.now(timezone.utc).isoformat()
     async with transaction():
@@ -716,7 +785,6 @@ async def get_ticket(channel_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 async def get_user_active_ticket(user_id: int) -> Optional[dict]:
-    """Проверяет, есть ли у пользователя открытый тикет"""
     row = await fetchone(
         'SELECT * FROM tickets WHERE user_id = ? AND status = "open" LIMIT 1',
         (user_id,)
@@ -752,7 +820,6 @@ async def get_expired_tickets() -> List[dict]:
     )
     return [dict(row) for row in rows] if rows else []
 
-# ================= REVIEWS =================
 async def add_review(user_id: int, seller_id: int, lot_id: int, rating: int, comment: str):
     async with transaction():
         await _execute_no_lock(
@@ -797,7 +864,6 @@ async def set_seller_review_message(seller_id: int, message_id: int, channel_id:
             (seller_id, message_id, channel_id, message_id, channel_id)
         )
 
-# ================= SELLER STATS =================
 async def get_seller_stats_top(limit: int = 10) -> List[dict]:
     rows = await fetchall('SELECT * FROM stats ORDER BY revenue DESC LIMIT ?', (limit,))
     return [dict(row) for row in rows] if rows else []
@@ -806,7 +872,6 @@ async def get_seller_top_sales(limit: int = 10) -> List[dict]:
     rows = await fetchall('SELECT * FROM stats ORDER BY sales DESC LIMIT ?', (limit,))
     return [dict(row) for row in rows] if rows else []
 
-# ================= PROMOS =================
 async def get_all_promos() -> Dict[str, Promo]:
     global promos_cache
     if promos_cache:
@@ -847,7 +912,6 @@ async def get_expired_promos(current_date: str) -> List[str]:
     rows = await fetchall('SELECT code FROM promos WHERE expires <= ?', (current_date,))
     return [r['code'] for r in rows]
 
-# ================= BLACKLIST =================
 async def get_blacklist() -> List[int]:
     global blacklist_cache
     if blacklist_cache:
@@ -896,7 +960,6 @@ async def get_ban_history(user_id: int) -> List[dict]:
     rows = await fetchall('SELECT * FROM ban_history WHERE user_id = ? ORDER BY created_at DESC', (user_id,))
     return [dict(row) for row in rows] if rows else []
 
-# ================= STATS =================
 async def get_all_stats() -> Dict[int, dict]:
     global stats_cache
     if stats_cache:
@@ -924,7 +987,6 @@ async def update_stats(user_id: int, sales_inc: int = 1, revenue_inc: int = 0):
         )
         stats_cache = {}
 
-# ================= WARNINGS =================
 async def get_all_warnings() -> Dict[int, dict]:
     global warnings_cache
     if warnings_cache:
@@ -980,7 +1042,6 @@ async def remove_warning(warning_id: int):
         await _execute_no_lock('DELETE FROM warnings WHERE id = ?', (warning_id,))
         warnings_cache = {}
 
-# ================= SHOP MESSAGES =================
 async def get_shop_messages(guild_id: int) -> dict:
     row = await fetchone('SELECT img_id, stat_id FROM shop_messages WHERE guild_id = ?', (guild_id,))
     if row:
@@ -1001,7 +1062,6 @@ async def delete_shop_messages(guild_id: int):
     async with transaction():
         await _execute_no_lock('DELETE FROM shop_messages WHERE guild_id = ?', (guild_id,))
 
-# ================= LOT TEMPLATES =================
 async def add_lot_template(name: str, price: str, short_description: str, full_description: str,
                             category_id: int, seller_id: int, created_by: int) -> int:
     created_at = datetime.now(timezone.utc).isoformat()
@@ -1027,7 +1087,6 @@ async def delete_lot_template(template_id: int):
     async with transaction():
         await _execute_no_lock('DELETE FROM lot_templates WHERE id = ?', (template_id,))
 
-# ================= REFERRALS =================
 async def add_referral(referrer_id: int, referred_id: int):
     created_at = datetime.now(timezone.utc).isoformat()
     async with transaction():
@@ -1044,7 +1103,6 @@ async def get_referrer(referred_id: int) -> Optional[int]:
     row = await fetchone('SELECT referrer_id FROM referrals WHERE referred_id = ?', (referred_id,))
     return row['referrer_id'] if row else None
 
-# ================= CURRENCY RATES =================
 async def update_currency_rates(rates: Dict[str, float]):
     global currency_rates_cache
     updated_at = datetime.now(timezone.utc).isoformat()
@@ -1076,9 +1134,7 @@ async def convert_price_rub(price_rub: float) -> Dict[str, str]:
         result["EUR"] = f"€{price_rub * rates['EUR']:.2f}"
     return result
 
-# ================= BACKUP & RESTORE =================
 async def restore_from_backup_channel(channel_id: int, bot):
-    """Восстанавливает категории и товары из последнего бэкапа в канале"""
     channel = bot.get_channel(channel_id)
     if not channel:
         try:
@@ -1135,13 +1191,28 @@ async def restore_from_backup_channel(channel_id: int, bot):
     
     return False
 
-# ================= CACHE =================
 async def refresh_cache():
     global categories_cache, lots_cache, promos_cache, blacklist_cache, stats_cache, warnings_cache
-    categories_cache = await get_all_categories()
-    lots_cache = await get_all_lots()
-    promos_cache = await get_all_promos()
-    blacklist_cache = await get_blacklist()
-    stats_cache = await get_all_stats()
-    warnings_cache = await get_all_warnings()
+    print("⏳ refresh_cache(): начало загрузки кэша...")
+
+    async def _safe_load(name, coro, default):
+        try:
+            result = await asyncio.wait_for(coro, timeout=15.0)
+            print(f"    ✅ {name}: {len(result)}")
+            return result
+        except asyncio.TimeoutError:
+            print(f"    ❌ {name}: TIMEOUT")
+            return default
+        except Exception as e:
+            print(f"    ❌ {name}: {e}")
+            return default
+
+    categories_cache = await _safe_load("categories", get_all_categories(), {})
+    lots_cache = await _safe_load("lots", get_all_lots(), {})
+    promos_cache = await _safe_load("promos", get_all_promos(), {})
+    blacklist_cache = await _safe_load("blacklist", get_blacklist(), [])
+    stats_cache = await _safe_load("stats", get_all_stats(), {})
+    warnings_cache = await _safe_load("warnings", get_all_warnings(), {})
+
+    print("✅ Кэш полностью загружен!")
     logger.info("✅ Cache refreshed successfully")

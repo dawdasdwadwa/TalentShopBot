@@ -1,27 +1,50 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Distribution / packaging
-build/
+*.pyc
+*.pyo
+.Python
+*.so
+*.egg
 *.egg-info/
-.dist/
+dist/
+build/
 
-# Virtual environment
+# Виртуальное окружение
 venv/
-.env/
+.venv/
 env/
 
-# VS Code settings
-.vscode/
-
-# OS files
-Thumbs.db
-Desktop.ini
-
-# Logs
-*.log
-
-# Secrets
+# Секреты и токены
 .env
+.env.*
+!.env.example
+secrets.py
+
+# База данных
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Логи
+*.log
+bot.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Railway
+railway/
+.railway/
+
+# Временные файлы
+*.bak
+*.tmp
+*.temp

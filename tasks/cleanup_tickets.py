@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
-from .. import database as db
+import database as db
 
 logger = logging.getLogger(__name__)
 

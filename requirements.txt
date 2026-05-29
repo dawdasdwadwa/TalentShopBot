@@ -1,12 +1,5 @@
-<<<<<<< HEAD
 discord.py
 aiohttp
 aiosqlite
 pynacl
-=======
-discord.py
-aiohttp
-aiosqlite
-pynacl
->>>>>>> fc9b005f42a2d519f087b65437c3a93fddb838ca
 groq

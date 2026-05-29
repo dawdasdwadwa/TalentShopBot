@@ -1399,6 +1399,88 @@ async def on_ready():
     logger.info(f"✅ Бот готов: {bot.user}")
 
 @bot.event
+async def on_message(message: discord.Message):
+    # Пропускаем сообщения от ботов
+    if message.author.bot:
+        await bot.process_commands(message)
+        return
+    
+    # Определяем категорию по каналу
+    category = None
+    for cat, cat_channel_id in CATEGORY_CHANNELS.items():
+        if cat_channel_id == message.channel.id:
+            category = cat
+            break
+    
+    # Если это не ИИ-канал — обрабатываем команды
+    if not category:
+        await bot.process_commands(message)
+        return
+    
+    # Пропускаем команды
+    if message.content.startswith('!'):
+        await bot.process_commands(message)
+        return
+    
+    # Отправляем индикатор набора текста
+    async with message.channel.typing():
+        try:
+            # Получаем историю последних 10 сообщений в канале (кроме сообщений бота)
+            history_messages = []
+            async for msg in message.channel.history(limit=15):
+                if msg.author.bot:
+                    continue
+                # Берём только последние 10 сообщений от пользователей
+                if len(history_messages) < 10:
+                    history_messages.insert(0, {"role": "user", "content": msg.content})
+            
+            # Формируем промпт
+            final_prompt = message.content
+            
+            # Добавляем контекст сервера (опционально)
+            use_server_context = True
+            if use_server_context and message.guild:
+                server_info = await build_server_context(message.guild)
+                final_prompt = f"{server_info}\n\nВопрос пользователя: {message.content}"
+            
+            # Запрос к ИИ с учётом истории канала
+            response = await ask_groq_mode(category, final_prompt, history_messages, "hide")
+            
+            if response.startswith("Ошибка"):
+                await message.reply(f"❌ {response}")
+                return
+            
+            # Сохраняем в БД историю по пользователю (для личной истории, опционально)
+            await db.add_to_history(message.author.id, category, "user", message.content)
+            await db.add_to_history(message.author.id, category, "assistant", response[:3000])
+            
+            # Отправляем ответ
+            if len(response) <= 1900:
+                await message.reply(response)
+            else:
+                # Длинный ответ — отправляем файлом
+                filename = f"ai_answer_{category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                file_bytes = response.encode('utf-8')
+                file_obj = io.BytesIO(file_bytes)
+                await message.reply(
+                    content="📄 **Ответ ИИ (полный):**",
+                    file=discord.File(file_obj, filename=filename)
+                )
+                # Короткая версия в embed
+                embed = discord.Embed(
+                    title=f"{CATEGORY_LABELS.get(category, category)}",
+                    description=response[:500] + "... (полный ответ в файле)",
+                    color=discord.Color.blue()
+                )
+                await message.channel.send(embed=embed)
+                
+        except Exception as e:
+            logger.exception("Ошибка в on_message (ИИ)")
+            await message.reply(f"❌ Ошибка: {e}")
+    
+    await bot.process_commands(message)
+
+@bot.event
 async def on_member_join(member: discord.Member):
     config = get_config(member.guild.id)
     if not config:

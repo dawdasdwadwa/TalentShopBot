@@ -5,6 +5,7 @@ from discord.ui import Button, View
 from discord import app_commands
 import os
 import re
+import sys
 import io
 import json
 import asyncio
@@ -22,6 +23,10 @@ import groq
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Принудительно устанавливаем UTF-8 для stdout/stderr
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ================= КОНСТАНТЫ =================
 AI_CONVEYOR_CHANNEL_ID = 1509333979713769612
@@ -116,7 +121,16 @@ async def ask_groq_with_retry(model: str, messages: List[Dict[str, str]], max_re
                 messages=messages,
                 temperature=temperature,
             )
-            return response.choices[0].message.content
+            text = response.choices[0].message.content
+            
+            # Принудительно фиксим кодировку
+            try:
+                # Пробуем перекодировать из Windows-1251 в UTF-8
+                text = text.encode('latin1').decode('utf-8')
+            except:
+                pass
+            
+            return text
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg and attempt < max_retries - 1:

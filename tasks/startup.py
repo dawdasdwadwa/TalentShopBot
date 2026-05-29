@@ -3,14 +3,14 @@ import logging
 import discord
 
 from config.settings import CONFIG
-from ..utils.channel import fetch_channel_safe
-from ..panels.verify_panel import send_verify_panel
-from ..panels.ticket_panel import send_ticket_panel
-from ..panels.shop_panel import send_or_update_shop
-from ..panels.status_panel import send_status_channel_panel
-from ..utils.permissions import get_config, is_admin_member
-from ..config.constants import BACKUP_CHANNEL_ID, AI_CONVEYOR_CHANNEL_ID
-from .. import database as db
+from utils.channel import fetch_channel_safe
+from panels.verify_panel import send_verify_panel
+from panels.ticket_panel import send_ticket_panel
+from panels.shop_panel import send_or_update_shop
+from panels.status_panel import send_status_channel_panel
+from utils.permissions import get_config, is_admin_member
+from config.constants import BACKUP_CHANNEL_ID, AI_CONVEYOR_CHANNEL_ID
+from  import database as db
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ async def setup_panels(bot):
 
 async def setup_ai_panel(bot):
     """Отправляет панель ИИ-конвейера"""
-    from ..ai.views import StartAIButton
+    from ai.views import StartAIButton
     channel = await fetch_channel_safe(bot, AI_CONVEYOR_CHANNEL_ID)
     if not channel:
         logger.warning(f"⚠️ Канал ИИ-конвейера {AI_CONVEYOR_CHANNEL_ID} не найден")

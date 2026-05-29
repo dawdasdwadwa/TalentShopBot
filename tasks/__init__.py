@@ -1,4 +1,4 @@
-from .cleanup_tickets import auto_cleanup_tickets
-from .update_currency import auto_update_currency, fetch_currency_rates
-from .cleanup_spam import cleanup_spam_cache, user_mention_count, user_mention_last_reset
-from .startup import _startup_background, _safe_task, setup_panels, setup_ai_panel
+from cleanup_tickets import auto_cleanup_tickets
+from update_currency import auto_update_currency, fetch_currency_rates
+from cleanup_spam import cleanup_spam_cache, user_mention_count, user_mention_last_reset
+from startup import _startup_background, _safe_task, setup_panels, setup_ai_panel

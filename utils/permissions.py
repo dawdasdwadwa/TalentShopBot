@@ -1,7 +1,7 @@
 from typing import Optional
 import discord
 
-from ..config.settings import CONFIG
+from config.settings import CONFIG
 
 def get_config(guild_id: int) -> Optional[dict]:
     """Получает конфигурацию сервера по ID"""

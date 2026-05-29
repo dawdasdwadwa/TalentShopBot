@@ -2,10 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from ..utils.permissions import is_owner
-from ..config.constants import BACKUP_CHANNEL_ID
-from .. import database as db
-from ..panels.shop_panel import send_or_update_shop
+from utils.permissions import is_owner
+from config.constants import BACKUP_CHANNEL_ID
+from  import database as db
+from panels.shop_panel import send_or_update_shop
 
 class BackupCog(commands.Cog):
     def __init__(self, bot):

@@ -2,8 +2,8 @@ import discord
 from discord.ui import Modal, TextInput
 from datetime import datetime, timezone
 
-from ..utils.permissions import get_config
-from .. import database as db
+from utils.permissions import get_config
+from  import database as db
 
 class ReviewModal(discord.ui.Modal, title="Оставить отзыв"):
     rating = discord.ui.TextInput(

@@ -2,9 +2,9 @@ import asyncio
 import re
 import logging
 
-from .client import get_next_groq_client
-from .prompts import MODE_MODELS, SYSTEM_PROMPTS, MODEL_CODING
-from ..utils.helpers import clean_markdown
+from client import get_next_groq_client
+from prompts import MODE_MODELS, SYSTEM_PROMPTS, MODEL_CODING
+from utils.helpers import clean_markdown
 
 logger = logging.getLogger(__name__)
 

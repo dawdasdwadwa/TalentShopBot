@@ -1,6 +1,6 @@
 import discord
-from ..utils.channel import fetch_channel_safe
-from ..utils.permissions import get_config
+from utils.channel import fetch_channel_safe
+from utils.permissions import get_config
 
 class VerifyButton(discord.ui.Button):
     def __init__(self):

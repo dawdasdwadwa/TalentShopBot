@@ -1,10 +1,10 @@
 import discord
 import re
 from discord.ui import Button, View, Modal, TextInput
-from ..utils.channel import fetch_channel_safe
-from ..utils.permissions import get_config, is_admin_member
-from ..config.constants import TICKET_SUPPORT_CATEGORY_ID, TICKET_ARCHIVE_CATEGORY_ID
-from .. import database as db
+from utils.channel import fetch_channel_safe
+from utils.permissions import get_config, is_admin_member
+from config.constants import TICKET_SUPPORT_CATEGORY_ID, TICKET_ARCHIVE_CATEGORY_ID
+from  import database as db
 
 class TicketModal(discord.ui.Modal, title="Создание тикета поддержки"):
     subject = discord.ui.TextInput(

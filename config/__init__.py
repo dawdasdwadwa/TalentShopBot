@@ -1,2 +1,2 @@
-from .constants import *
-from .settings import CONFIG
+from constants import *
+from settings import CONFIG

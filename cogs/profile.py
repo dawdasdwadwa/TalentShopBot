@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from ..panels.status_panel import build_status_embed
+from panels.status_panel import build_status_embed
 
 class ProfileCog(commands.Cog):
     def __init__(self, bot):

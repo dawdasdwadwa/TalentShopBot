@@ -4,11 +4,11 @@ import re
 from discord.ui import Button, View, Select
 from datetime import datetime, timezone
 
-from ..utils.channel import fetch_channel_safe
-from ..utils.permissions import get_config, is_admin_member
-from ..config.constants import SHOP_IMAGE_LINK, TICKET_CATEGORY_NAME, TICKET_COOLDOWN_SECONDS
-from .. import database as db
-from ..database import has_user_bought, update_stock, get_stock, add_purchase
+from utils.channel import fetch_channel_safe
+from utils.permissions import get_config, is_admin_member
+from config.constants import SHOP_IMAGE_LINK, TICKET_CATEGORY_NAME, TICKET_COOLDOWN_SECONDS
+from  import database as db
+from database import has_user_bought, update_stock, get_stock, add_purchase
 
 # ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ =================
 def parse_price_rub(price_str: str):
@@ -171,7 +171,7 @@ class LotActionView(discord.ui.View):
     async def buy_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            from ..database import get_daily_purchase_count
+            from database import get_daily_purchase_count
             daily_count = await get_daily_purchase_count(interaction.user.id)
             if daily_count >= 10:
                 await interaction.followup.send(f"❌ Достигнут дневной лимит покупок (10 в день).", ephemeral=True)

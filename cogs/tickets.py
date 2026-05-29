@@ -2,10 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from ..utils.permissions import is_owner, is_admin_member
-from ..panels.ticket_panel import TicketCreateButton, send_ticket_panel
-from ..config.constants import TICKET_CHANNEL_ID
-from .. import database as db
+from utils.permissions import is_owner, is_admin_member
+from panels.ticket_panel import TicketCreateButton, send_ticket_panel
+from config.constants import TICKET_CHANNEL_ID
+from  import database as db
 
 class TicketsCog(commands.Cog):
     def __init__(self, bot):

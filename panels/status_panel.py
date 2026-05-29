@@ -1,9 +1,9 @@
 import discord
 from datetime import datetime
 
-from ..utils.channel import fetch_channel_safe
-from ..config.constants import OWNER_ID
-from .. import database as db
+from utils.channel import fetch_channel_safe
+from config.constants import OWNER_ID
+from  import database as db
 
 async def build_status_embed(guild: discord.Guild, user: discord.Member) -> discord.Embed:
     purchases = await db.get_user_purchases(user.id)

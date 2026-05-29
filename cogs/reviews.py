@@ -3,10 +3,10 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from ..utils.permissions import is_owner
-from ..panels import ReviewModal
-from .. import database as db
-from ..database import get_seller_rating, get_seller_reviews
+from utils.permissions import is_owner
+from panels import ReviewModal
+from  import database as db
+from database import get_seller_rating, get_seller_reviews
 
 class ReviewsCog(commands.Cog):
     def __init__(self, bot):

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import discord
 
-from ..config.settings import CONFIG
+from config.settings import CONFIG
 from ..utils.channel import fetch_channel_safe
 from ..panels.verify_panel import send_verify_panel
 from ..panels.ticket_panel import send_ticket_panel

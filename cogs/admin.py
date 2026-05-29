@@ -6,7 +6,7 @@ from typing import Optional
 from utils.permissions import is_owner, get_config
 from panels.verify_panel import send_verify_panel
 from panels.shop_panel import send_or_update_shop
-from  import database as db
+import database as db
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):

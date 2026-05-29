@@ -5,7 +5,7 @@ from typing import Optional
 
 from utils.permissions import is_owner
 from panels import ReviewModal
-from  import database as db
+import database as db
 from database import get_seller_rating, get_seller_reviews
 
 class ReviewsCog(commands.Cog):

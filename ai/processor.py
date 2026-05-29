@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 import discord
 
 from config.constants import CATEGORY_CHANNELS, CATEGORY_LABELS, LOG_CHANNEL_ID
-from handlers import ask_groq_mode
-from  import database as db
+from .handlers import ask_groq_mode
+from .. import database as db
 
 logger = logging.getLogger(__name__)
 

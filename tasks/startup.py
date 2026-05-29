@@ -10,7 +10,7 @@ from panels.shop_panel import send_or_update_shop
 from panels.status_panel import send_status_channel_panel
 from utils.permissions import get_config, is_admin_member
 from config.constants import BACKUP_CHANNEL_ID, AI_CONVEYOR_CHANNEL_ID
-from  import database as db
+import database as db
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ from discord import app_commands
 from typing import Optional
 
 from utils.permissions import is_admin_member
-from  import database as db
+import database as db
 
 class ModerationCog(commands.Cog):
     def __init__(self, bot):

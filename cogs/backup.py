@@ -4,7 +4,7 @@ from discord import app_commands
 
 from utils.permissions import is_owner
 from config.constants import BACKUP_CHANNEL_ID
-from  import database as db
+import database as db
 from panels.shop_panel import send_or_update_shop
 
 class BackupCog(commands.Cog):

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from utils.channel import fetch_channel_safe
 from utils.permissions import get_config, is_admin_member
 from config.constants import SHOP_IMAGE_LINK, TICKET_CATEGORY_NAME, TICKET_COOLDOWN_SECONDS
-from  import database as db
+import database as db
 from database import has_user_bought, update_stock, get_stock, add_purchase
 
 # ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ =================

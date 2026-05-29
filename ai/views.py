@@ -5,8 +5,8 @@ from discord.ui import TextInput, Modal, Button, View, Select
 logger = logging.getLogger(__name__)
 
 from config.constants import CATEGORY_LABELS, CATEGORY_CHANNELS
-from processor import process_ai_request
-from  import database as db
+from .processor import process_ai_request
+from .. import database as db
 
 # ================= AIInputModal =================
 class AIInputModal(discord.ui.Modal):

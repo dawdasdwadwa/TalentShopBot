@@ -140,6 +140,24 @@ async def ask_groq_with_retry(model: str, messages: List[Dict[str, str]], max_re
             return f"Ошибка Groq API: {error_msg[:200]}"
     return "Ошибка: Все ключи исчерпали лимиты"
 
+def clean_markdown(text: str) -> str:
+    """Удаляет markdown-разметку, оставляя чистый текст"""
+    # Убираем заголовки ###, ##, # в начале строки
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Убираем жирный текст **текст** → текст
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    # Убираем курсив *текст* → текст
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    # Убираем горизонтальные линии ---, ***, ___
+    text = re.sub(r'^[-*_]{3,}$', '', text, flags=re.MULTILINE)
+    # Убираем ссылки [текст](url) → текст
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    # Убираем обратные кавычки `код` → код
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    # Убираем лишние переносы
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = None, show_think: str = "hide") -> str:
     model = MODE_MODELS.get(mode, MODEL_CODING)
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["coding"])
@@ -152,10 +170,12 @@ async def ask_groq_mode(mode: str, prompt: str, history: List[Dict[str, str]] = 
     temperature = 0.4 if mode in ["content", "design", "advice"] else 0.2
     response = await ask_groq_with_retry(model, messages, temperature=temperature)
     
+    # Удаляем think блок
     if show_think == "hide":
         response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
-        response = re.sub(r'\n{3,}', '\n\n', response)
-        response = response.strip()
+    
+    # Очищаем markdown для читаемого текста
+    response = clean_markdown(response)
     
     return response
 
@@ -210,7 +230,7 @@ async def process_ai_request(interaction: discord.Interaction, category: str, pr
             return
         
         # 4. Оборачиваем ответ в кодовый блок для сохранения форматирования
-        response = f"```\n{response}\n```"
+        response = await ask_groq_mode(...)  # Уже очищен внутри
         
         # 5. Сохраняем в историю (если включено)
         if use_history:

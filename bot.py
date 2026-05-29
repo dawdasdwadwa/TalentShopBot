@@ -336,30 +336,36 @@ class AIRequestView(discord.ui.View):
         view = ServerContextView(self.category, use_history)
         await interaction.response.edit_message(content=f"🎯 **{CATEGORY_LABELS.get(self.category, self.category)}**\n\nУчитывать структуру этого сервера?", view=view)
 
+class ModeButtonsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        
+        for value, label in CATEGORY_LABELS.items():
+            emoji = value.split("_")[0] if "_" in value else "🤖"
+            button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary, custom_id=f"mode_{value}", emoji=emoji)
+            button.callback = lambda i, v=value: self.mode_callback(i, v)
+            self.add_item(button)
+        
+        clear_btn = discord.ui.Button(label="🗑️ Очистить историю", style=discord.ButtonStyle.danger, custom_id="clear_history", emoji="🗑️")
+        clear_btn.callback = self.clear_callback
+        self.add_item(clear_btn)
+    
+    async def mode_callback(self, interaction: discord.Interaction, mode: str):
+        view = AIRequestView(category=mode)
+        await interaction.response.edit_message(content=f"🎯 **{CATEGORY_LABELS.get(mode, mode)}**\n\nУчитывать историю?", view=view)
+    
+    async def clear_callback(self, interaction: discord.Interaction):
+        await db.clear_user_history(interaction.user.id)
+        await interaction.response.send_message("✅ История очищена!", ephemeral=True)
+
 class StartAIButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="🚀 Запустить ИИ-Конвейер", style=discord.ButtonStyle.success, custom_id="start_ai")
     
     async def callback(self, interaction: discord.Interaction):
-        options = [discord.SelectOption(label=label, value=value) for value, label in CATEGORY_LABELS.items()]
-        options.append(discord.SelectOption(label="🗑️ Очистить историю", value="clear_history", emoji="🗑️"))
-        
-        class MainSelectView(discord.ui.View):
-            def __init__(self):
-                super().__init__(timeout=60)
-                self.select = discord.ui.Select(placeholder="🎯 Выберите режим", options=options)
-                self.select.callback = self.select_callback
-                self.add_item(self.select)
-            
-            async def select_callback(self, i: discord.Interaction):
-                if self.select.values[0] == "clear_history":
-                    await db.clear_user_history(i.user.id)
-                    await i.response.send_message("✅ История очищена!", ephemeral=True)
-                else:
-                    view = AIRequestView(category=self.select.values[0])
-                    await i.response.edit_message(content=f"🎯 **{CATEGORY_LABELS.get(self.select.values[0], self.select.values[0])}**\n\nУчитывать историю?", view=view)
-        
-        await interaction.response.send_message("🎯 **Выберите режим работы:**", view=MainSelectView(), ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        view = ModeButtonsView()
+        await interaction.followup.send("🎯 **Выберите режим работы:**", view=view, ephemeral=True)
 
 # ================= КОНФИГУРАЦИЯ СЕРВЕРА =================
 CONFIG = {

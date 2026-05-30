@@ -57,6 +57,127 @@ CATEGORY_LABELS = {
     "features": "🤖 Бот-фичи",
 }
 
+# ================= АДМИН ПАНЕЛЬ =================
+ADMIN_PANEL_CHANNEL_ID = 1503168213016641536
+
+class AdminPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="➕ Добавить категорию", style=discord.ButtonStyle.success, custom_id="admin_add_cat")
+    async def add_category_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        
+        class AddCategoryModal(discord.ui.Modal, title="Добавить категорию"):
+            name = discord.ui.TextInput(label="Название", placeholder="Введите название...", required=True)
+            emoji = discord.ui.TextInput(label="Эмодзи", placeholder="📁", required=False, default="📁")
+            
+            async def on_submit(self, i: discord.Interaction):
+                await i.response.defer(ephemeral=True)
+                cat_id = await db.add_category(name=self.name.value, emoji=self.emoji.value)
+                await db.refresh_cache()
+                await i.followup.send(f"✅ Категория `{self.emoji.value} {self.name.value}` добавлена (ID: {cat_id})", ephemeral=True)
+                # Обновляем магазин
+                config = get_config(i.guild_id)
+                if config and config.get("shop_channel"):
+                    guild = i.guild
+                    await send_or_update_shop(guild)
+        
+        await interaction.response.send_modal(AddCategoryModal())
+    
+    @discord.ui.button(label="📋 Список категорий", style=discord.ButtonStyle.primary, custom_id="admin_list_cat")
+    async def list_categories_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        await db.refresh_cache()
+        categories = db.categories_cache
+        if not categories:
+            await interaction.followup.send("📭 Нет категорий", ephemeral=True)
+            return
+        embed = discord.Embed(title="📁 Список категорий", color=discord.Color.blue())
+        for cat in categories.values():
+            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Товаров:** {len(cat.lots)}", inline=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="🗑️ Удалить категорию", style=discord.ButtonStyle.danger, custom_id="admin_del_cat")
+    async def delete_category_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        
+        class DeleteCategoryModal(discord.ui.Modal, title="Удалить категорию"):
+            cat_id = discord.ui.TextInput(label="ID категории", placeholder="Введите ID...", required=True)
+            
+            async def on_submit(self, i: discord.Interaction):
+                await i.response.defer(ephemeral=True)
+                cat_id = int(self.cat_id.value)
+                category = await db.get_category(cat_id)
+                if not category:
+                    await i.followup.send(f"❌ Категория `{cat_id}` не найдена", ephemeral=True)
+                    return
+                await db.delete_category(cat_id)
+                await db.refresh_cache()
+                await i.followup.send(f"✅ Категория `{category.emoji} {category.name}` удалена", ephemeral=True)
+                # Обновляем магазин
+                config = get_config(i.guild_id)
+                if config and config.get("shop_channel"):
+                    await send_or_update_shop(i.guild)
+        
+        await interaction.response.send_modal(DeleteCategoryModal())
+    
+    @discord.ui.button(label="🔄 Обновить магазин", style=discord.ButtonStyle.secondary, custom_id="admin_refresh_shop")
+    async def refresh_shop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        await db.refresh_cache()
+        await send_or_update_shop(interaction.guild)
+        await interaction.followup.send("✅ Магазин обновлён!", ephemeral=True)
+    
+    @discord.ui.button(label="📊 Статистика", style=discord.ButtonStyle.secondary, custom_id="admin_stats")
+    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        categories = db.categories_cache
+        total_lots = len(db.lots_cache)
+        embed = discord.Embed(title="📊 Статистика магазина", color=discord.Color.green())
+        embed.add_field(name="📁 Категорий", value=str(len(categories)), inline=True)
+        embed.add_field(name="🛒 Товаров", value=str(total_lots), inline=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+async def setup_admin_panel():
+    channel = bot.get_channel(ADMIN_PANEL_CHANNEL_ID)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(ADMIN_PANEL_CHANNEL_ID)
+        except Exception as e:
+            logger.error(f"Админ канал {ADMIN_PANEL_CHANNEL_ID} не найден: {e}")
+            return
+    
+    # Очищаем старые сообщения бота
+    try:
+        async for msg in channel.history(limit=50):
+            if msg.author == bot.user:
+                await msg.delete()
+    except Exception:
+        pass
+    
+    embed = discord.Embed(
+        title="🛠️ Админ панель",
+        description="Управление магазином и категориями",
+        color=discord.Color.blurple()
+    )
+    view = AdminPanelView()
+    await channel.send(embed=embed, view=view)
+    logger.info("✅ Админ панель отправлена")
+
 # ================= ИНИЦИАЛИЗАЦИЯ GROQ =================
 GROQ_API_KEYS = [
     os.getenv("GROQ_API_KEY"),
@@ -1362,6 +1483,11 @@ async def _startup_background():
         logger.info("✅ Панель ИИ-конвейера настроена")
     except Exception as e:
         logger.error(f"❌ Ошибка настройки ИИ-панели: {e}")
+    try:
+        await setup_admin_panel()
+        logger.info("✅ Админ панель настроена")
+    except Exception as e:
+        logger.error(f"❌ Ошибка настройки админ панели: {e}")
     logger.info("✅ _startup_background() завершён!")
 
 @bot.event

@@ -630,9 +630,6 @@ async def _do_shop_update(guild: discord.Guild):
         except Exception as e:
             logger.error(f"Не удалось отправить картинку: {e}")
     
-    # Отправляем меню (без эмбеда, просто текст + меню)
-    msg = await channel.send("**📁 Выберите категорию:**", view=view)
-    await db.set_shop_messages(guild.id, img_id=msg.id)
 
 async def send_or_update_shop(guild: discord.Guild):
     async with _shop_update_lock:

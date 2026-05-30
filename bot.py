@@ -614,8 +614,9 @@ async def _do_shop_update(guild: discord.Guild):
     else:
         catalog_embed = discord.Embed(title="TALENT SHOP — КАТАЛОГ ТОВАРОВ", description="Выберите категорию в меню ниже.", color=discord.Color.from_rgb(0, 0, 0))
         catalog_embed.set_footer(text="TALENT SHOP | Нажми для выбора.")
-    catalog_embed.set_image(url=SHOP_IMAGE_LINK)
+    
     view = ShopView()
+    
     try:
         async for msg in channel.history(limit=50):
             if msg.author == bot.user and msg.embeds and msg.embeds[0].title == "TALENT SHOP — КАТАЛОГ ТОВАРОВ":
@@ -625,6 +626,15 @@ async def _do_shop_update(guild: discord.Guild):
                     pass
     except Exception:
         pass
+    
+    # Отправляем картинку отдельным сообщением
+    if SHOP_IMAGE_LINK and SHOP_IMAGE_LINK.startswith(('http://', 'https://')):
+        try:
+            await channel.send(SHOP_IMAGE_LINK)
+        except Exception as e:
+            logger.error(f"Не удалось отправить картинку: {e}")
+    
+    # Отправляем эмбед
     msg = await channel.send(embed=catalog_embed, view=view)
     await db.set_shop_messages(guild.id, img_id=msg.id)
 

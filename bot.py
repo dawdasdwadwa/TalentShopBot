@@ -608,12 +608,6 @@ async def _do_shop_update(guild: discord.Guild):
     if not channel:
         return
     await db.refresh_cache()
-    categories = db.categories_cache
-    if not categories:
-        catalog_embed = discord.Embed(title="TALENT SHOP — КАТАЛОГ ТОВАРОВ", description="В магазине пока нет товаров.", color=discord.Color.from_rgb(0, 0, 0))
-    else:
-        catalog_embed = discord.Embed(title="TALENT SHOP — КАТАЛОГ ТОВАРОВ", description="Выберите категорию в меню ниже.", color=discord.Color.from_rgb(0, 0, 0))
-        catalog_embed.set_footer(text="TALENT SHOP | Нажми для выбора.")
     
     view = ShopView()
     
@@ -634,8 +628,9 @@ async def _do_shop_update(guild: discord.Guild):
         except Exception as e:
             logger.error(f"Не удалось отправить картинку: {e}")
     
-    # Отправляем эмбед
-    msg = await channel.send(embed=catalog_embed, view=view)
+    # Отправляем пустой эмбед с меню (без текста)
+    empty_embed = discord.Embed(color=discord.Color.from_rgb(0, 0, 0))
+    msg = await channel.send(embed=empty_embed, view=view)
     await db.set_shop_messages(guild.id, img_id=msg.id)
 
 async def send_or_update_shop(guild: discord.Guild):

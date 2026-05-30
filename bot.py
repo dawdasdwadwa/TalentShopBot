@@ -398,7 +398,7 @@ CONFIG = {
 }
 
 OWNER_ID = 1500198262026539099
-SHOP_IMAGE_LINK = "https://i.imgur.com/ваша_картинка.png"
+SHOP_IMAGE_LINK = "https://postimg.cc/sB7bc8C8"
 DAILY_PURCHASE_LIMIT = 10
 MAX_WARNINGS_BEFORE_BAN = 3
 

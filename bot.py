@@ -640,9 +640,9 @@ async def send_or_update_shop(guild: discord.Guild):
 
 # ================= ПОИСК В МАГАЗИНЕ =================
 class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
-    query = discord.ui.TextInput(label="Название товара или категории", placeholder="Введите название...", min_length=2, max_length=100, required=True)
+    query = discord.ui.TextInput(label="Название товара или категории", placeholder="Введите название...", min_length=1, max_length=200, required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         search_term = self.query.value.strip()
         cats = db.categories_cache
         matched_cats = [c for c in cats.values() if search_term.lower() in c.name.lower()]
@@ -652,14 +652,18 @@ class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
             return
         embed = discord.Embed(title=f"🔍 Результаты поиска: {search_term}", color=discord.Color.blue())
         if matched_cats:
-            cat_text = "\n".join([f"{c.emoji} **{c.name}** — товаров: {len(c.lots)}" for c in matched_cats[:5]])
+            cat_text = "\n".join([f"{c.emoji} **{c.name}** — товаров: {len(c.lots)}" for c in matched_cats])
             embed.add_field(name="📁 Категории", value=cat_text, inline=False)
         if matched_lots:
-            lots_text = "".join([f"{'✅' if lot.stock > 0 else '❌'} **{lot.name}** — {lot.price}\n" for lot in matched_lots[:10]])
+            lots_text = "".join([f"{'✅' if lot.stock > 0 else '❌'} **{lot.name}** — {lot.price}\n" for lot in matched_lots])
+            if len(lots_text) > 1000:
+                lots_text = lots_text[:1000] + "..."
             embed.add_field(name="🛒 Товары", value=lots_text, inline=False)
         view = discord.ui.View(timeout=120)
         if matched_lots:
-            options = [discord.SelectOption(label=f"{lot.name[:50]} - {lot.price[:20]}", value=str(lot.lot_id), emoji="🛒") for lot in matched_lots[:25]]
+            options = [discord.SelectOption(label=f"{lot.name[:50]} - {lot.price[:20]}", value=str(lot.lot_id), emoji="🛒") for lot in matched_lots]
+            if len(options) > 25:
+                options = options[:25]
             select = discord.ui.Select(placeholder="Выбрать товар из результатов", options=options)
             select.callback = lambda i: lot_select_callback(i, select)
             view.add_item(select)
@@ -724,8 +728,32 @@ class ShopView(discord.ui.View):
         await interaction.response.send_modal(ShopSearchModal())
     
     async def category_callback(self, interaction: discord.Interaction):
-        # ... код остаётся тот же ...
-        pass
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            category_id = int(interaction.data['values'][0])
+            category = await db.get_category(category_id)
+            if not category:
+                await interaction.followup.send("❌ Категория не найдена", ephemeral=True)
+                return
+            lots_in_category = await db.get_lots_by_category_full(category_id)
+            if not lots_in_category:
+                embed = discord.Embed(title=f"📁 {category.name}", description="В этой категории пока нет товаров.", color=discord.Color.blue())
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+            embed = discord.Embed(title=f"📁 {category.name}", description="**Выбери товар из списка ниже:**", color=discord.Color.blue())
+            if category.image_url and category.image_url.startswith(('http://', 'https://')):
+                embed.set_image(url=category.image_url)
+            for lot in lots_in_category:
+                seller = interaction.guild.get_member(lot.seller_id)
+                seller_name = seller.display_name if seller else "Продавец"
+                stock_text = f"📦 В наличии: {lot.stock}" if lot.stock > 0 else "❌ Нет в наличии"
+                desc = (lot.short_description or "")[:80]
+                embed.add_field(name=f"🛒 {lot.name}", value=f"💰 **Цена:** {lot.price}\n{stock_text}\n📝 {desc}\n👤 **Продавец:** {seller_name}", inline=False)
+            view = LotsView(category_id, lots_in_category)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        except Exception as e:
+            logger.exception("Ошибка category_callback")
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
     
     async def prev_page(self, interaction: discord.Interaction):
         self.page -= 1

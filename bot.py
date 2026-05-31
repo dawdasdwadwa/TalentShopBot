@@ -1229,7 +1229,15 @@ class ShopView(discord.ui.View):
             for lot in lots_in_category:
                 seller = interaction.guild.get_member(lot.seller_id)
                 seller_name = seller.display_name if seller else "Продавец"
-                stock_text = f"📦 В наличии: {lot.stock}" if lot.stock > 0 else "❌ Нет в наличии"
+                
+                # Исправляем отображение количества
+                if lot.stock == -1:
+                    stock_text = "♾️ Бесконечно"
+                elif lot.stock > 0:
+                    stock_text = f"📦 В наличии: {lot.stock}"
+                else:
+                    stock_text = "❌ Нет в наличии"
+                
                 desc = (lot.short_description or "")[:80]
                 embed.add_field(name=f"🛒 {lot.name}", value=f"💰 **Цена:** {lot.price}\n{stock_text}\n📝 {desc}\n👤 **Продавец:** {seller_name}", inline=False)
             view = LotsView(category_id, lots_in_category)
@@ -1316,25 +1324,37 @@ class LotActionView(discord.ui.View):
             if daily_count >= DAILY_PURCHASE_LIMIT:
                 await interaction.followup.send(f"❌ Достигнут дневной лимит покупок ({DAILY_PURCHASE_LIMIT} в день).", ephemeral=True)
                 return
-            stock = await get_stock(self.lot_id)
-            if stock != -1 and stock <= 0:
+            
+            # Получаем актуальные данные о товаре
+            lot_data = await db.get_lot(self.lot_id)
+            if not lot_data:
+                await interaction.followup.send("❌ Товар не найден!", ephemeral=True)
+                return
+            
+            # Проверка наличия (для бесконечных товаров пропускаем)
+            if lot_data.stock != -1 and lot_data.stock <= 0:
                 await interaction.followup.send("❌ Товар закончился!", ephemeral=True)
                 return
+            
             if await has_user_bought(interaction.user.id, self.lot_id):
                 await interaction.followup.send("❌ Вы уже покупали этот товар!", ephemeral=True)
                 return
+            
             if await db.is_blacklisted(interaction.user.id):
                 await interaction.followup.send("❌ Вы в чёрном списке.", ephemeral=True)
                 return
+            
             key = (interaction.user.id, self.lot_id)
             if key in active_orders:
                 await interaction.followup.send("⚠️ Заказ уже создаётся, подождите.", ephemeral=True)
                 return
+            
             now = datetime.now()
             last = user_ticket_cooldown.get(interaction.user.id)
             if last and (now - last).total_seconds() < TICKET_COOLDOWN_SECONDS:
                 await interaction.followup.send(f"⏳ Подождите {TICKET_COOLDOWN_SECONDS} секунд.", ephemeral=True)
                 return
+            
             active_orders.add(key)
             user_ticket_cooldown[interaction.user.id] = now
             try:
@@ -1344,14 +1364,18 @@ class LotActionView(discord.ui.View):
                 if customer_role and customer_role not in interaction.user.roles:
                     await interaction.followup.send("⚠️ Пройдите верификацию в канале #верификация", ephemeral=True)
                     return
+                
                 category = discord.utils.get(interaction.guild.categories, name=TICKET_CATEGORY_NAME)
                 if not category:
                     category = await interaction.guild.create_category(TICKET_CATEGORY_NAME)
+                
                 safe_lot = re.sub(r"[^a-zA-Z0-9а-яА-Я_-]", "-", self.lot.name.lower())[:15]
                 safe_user = re.sub(r"[^a-zA-Z0-9_-]", "-", interaction.user.name.lower())[:15]
                 channel_name = f"заказ-{safe_lot}-{safe_user}"
+                
                 seller_role_id = config["roles"].get("seller") if config else None
                 admin_role_id = config["roles"].get("admin") if config else None
+                
                 overwrites = {
                     interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
                     interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -1367,7 +1391,9 @@ class LotActionView(discord.ui.View):
                     admin_role = interaction.guild.get_role(admin_role_id)
                     if admin_role:
                         overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                
                 ticket_channel = await interaction.guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
+                
                 voice_channel = None
                 try:
                     voice_overwrites = {
@@ -1382,31 +1408,65 @@ class LotActionView(discord.ui.View):
                     voice_channel = await interaction.guild.create_voice_channel(f"🎙️-{safe_user}", category=category, overwrites=voice_overwrites)
                 except Exception:
                     pass
+                
                 await db.add_ticket(channel_id=ticket_channel.id, user_id=interaction.user.id, guild_id=interaction.guild_id, voice_channel_id=voice_channel.id if voice_channel else None)
-                embed = discord.Embed(title="🛒 НОВЫЙ ЗАКАЗ", description=f"**Покупатель:** {interaction.user.mention}\n**Товар:** {self.lot.name}\n**Цена:** {self.lot.price}\n\n**📝 Детальное описание:**\n{self.lot.full_description}\n\n**📝 Инструкция для продавца:**\n1. Расскажите покупателю о товаре.\n2. Отправьте реквизиты для оплаты.\n3. После оплаты передайте товар.\n4. Закройте тикет кнопкой ниже.\n\n**💰 Покупатель:** переведите деньги, напишите «Оплатил», получите товар.", color=discord.Color.green())
+                
+                # Отображение количества в embed
+                if lot_data.stock == -1:
+                    stock_display = "♾️ Бесконечно"
+                elif lot_data.stock > 0:
+                    stock_display = f"📦 Осталось: {lot_data.stock} шт."
+                else:
+                    stock_display = "❌ Нет в наличии"
+                
+                embed = discord.Embed(
+                    title="🛒 НОВЫЙ ЗАКАЗ",
+                    description=f"**Покупатель:** {interaction.user.mention}\n"
+                                f"**Товар:** {self.lot.name}\n"
+                                f"**Цена:** {self.lot.price}\n"
+                                f"{stock_display}\n\n"
+                                f"**📝 Детальное описание:**\n{self.lot.full_description}\n\n"
+                                f"**📝 Инструкция для продавца:**\n"
+                                f"1. Расскажите покупателю о товаре.\n"
+                                f"2. Отправьте реквизиты для оплаты.\n"
+                                f"3. После оплаты передайте товар.\n"
+                                f"4. Закройте тикет кнопкой ниже.\n\n"
+                                f"**💰 Покупатель:** переведите деньги, напишите «Оплатил», получите товар.",
+                    color=discord.Color.green()
+                )
+                
                 if voice_channel:
                     embed.add_field(name="🎙️ Голосовой канал", value=voice_channel.mention, inline=False)
+                
                 seller_mention = self.seller.mention if self.seller else "Продавец"
                 await ticket_channel.send(content=seller_mention, embed=embed)
                 await ticket_channel.send(f"{interaction.user.mention}, ожидайте ответа продавца.")
+                
                 if self.lot.role_id:
                     role = interaction.guild.get_role(self.lot.role_id)
                     if role:
                         await interaction.user.add_roles(role)
+                
                 await add_purchase(interaction.user.id, self.lot_id, self.lot.price)
-                # Если товар не бесконечный (stock != -1), уменьшаем количество
-                if self.lot.stock != -1:
+                
+                # Уменьшаем количество только если товар не бесконечный
+                if lot_data.stock != -1:
                     await update_stock(self.lot_id, -1)
+                
                 price_num = await parse_price_rub(self.lot.price)
                 revenue = int(price_num) if price_num else 0
                 await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=revenue)
+                
                 ticket_view = OrderCloseView(ticket_channel.id, interaction.user.id, self.seller, voice_channel.id if voice_channel else None)
                 await ticket_channel.send("✅ **Для завершения используйте кнопки ниже:**", view=ticket_view)
+                
                 try:
                     await interaction.delete_original_response()
                 except Exception:
                     pass
+                
                 await interaction.followup.send(f"✅ Заказ создан! Перейдите в {ticket_channel.mention}", ephemeral=True)
+                
             finally:
                 active_orders.discard(key)
         except Exception as e:

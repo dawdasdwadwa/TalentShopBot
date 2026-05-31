@@ -251,57 +251,41 @@ class LotsMenuView(discord.ui.View):
                 except:
                     stock_val = 0
                 
-                # Передаём данные в CategorySelectView через конструктор
                 class CategorySelectView(discord.ui.View):
-                    def __init__(self, lot_name, lot_price, lot_short, lot_full, lot_stock, seller_id):
+                    def __init__(self, lot_name, lot_price, lot_short, lot_full, lot_stock, seller_id, cats):
                         super().__init__(timeout=60)
                         self.lot_name = lot_name
                         self.lot_price = lot_price
                         self.lot_short = lot_short
                         self.lot_full = lot_full
                         self.lot_stock = lot_stock
-                        class CategorySelectView(discord.ui.View):
-                            def __init__(self, lot_name, lot_price, lot_short, lot_full, lot_stock, seller_id):
-                                super().__init__(timeout=60)
-                                self.lot_name = lot_name
-                                self.lot_price = lot_price
-                                self.lot_short = lot_short
-                                self.lot_full = lot_full
-                                self.lot_stock = lot_stock
-                                self.seller_id = seller_id
-                                
-                                options = [discord.SelectOption(label=cat.name, value=str(cat.id), emoji=cat.emoji) for cat in categories.values()]
-                                select = discord.ui.Select(placeholder="Выберите категорию", options=options)
-                                select.callback = self.select_callback
-                                self.add_item(select)
-                            
-                            async def select_callback(self, select_interaction: discord.Interaction):
-                                cat_id = int(select_interaction.data['values'][0])
-                                lot_id = await db.add_lot(
-                                    name=self.lot_name,
-                                    price=self.lot_price,
-                                    short_description=self.lot_short or "",
-                                    full_description=self.lot_full or "",
-                                    seller_id=self.seller_id,
-                                    category_id=cat_id,
-                                    stock=self.lot_stock
-                                )
-                                await db.refresh_cache()
-                                await select_interaction.response.send_message(f"✅ Товар **{self.lot_name}** добавлен! (ID: {lot_id})", ephemeral=True)
-                                config = get_config(select_interaction.guild_id)
-                                if config and config.get("shop_channel"):
-                                    await send_or_update_shop(select_interaction.guild)
-                                self.stop()
+                        self.seller_id = seller_id
+                        self.cats = cats
+                        
+                        options = []
+                        for cat in self.cats.values():
+                            options.append(discord.SelectOption(label=cat.name, value=str(cat.id), emoji=cat.emoji))
+                        
+                        select = discord.ui.Select(placeholder="📁 Выберите категорию", options=options)
+                        select.callback = self.select_callback
+                        self.add_item(select)
                     
-                    async def back_to_admin(self, select_interaction: discord.Interaction):
-                        # Возвращаемся в админ панель
-                        embed = discord.Embed(
-                            title="🛠️ Админ панель",
-                            description="Нажмите на кнопку ниже для открытия меню управления",
-                            color=discord.Color.blurple()
+                    async def select_callback(self, select_interaction: discord.Interaction):
+                        cat_id = int(select_interaction.data['values'][0])
+                        lot_id = await db.add_lot(
+                            name=self.lot_name,
+                            price=self.lot_price,
+                            short_description=self.lot_short or "",
+                            full_description=self.lot_full or "",
+                            seller_id=self.seller_id,
+                            category_id=cat_id,
+                            stock=self.lot_stock
                         )
-                        view = AdminPanelView()
-                        await select_interaction.response.edit_message(embed=embed, view=view)
+                        await db.refresh_cache()
+                        await select_interaction.response.send_message(f"✅ Товар **{self.lot_name}** добавлен! (ID: {lot_id})", ephemeral=True)
+                        config = get_config(select_interaction.guild_id)
+                        if config and config.get("shop_channel"):
+                            await send_or_update_shop(select_interaction.guild)
                         self.stop()
                 
                 view = CategorySelectView(
@@ -310,7 +294,8 @@ class LotsMenuView(discord.ui.View):
                     lot_short=self.short_desc.value,
                     lot_full=self.full_desc.value,
                     lot_stock=stock_val,
-                    seller_id=i.user.id
+                    seller_id=i.user.id,
+                    cats=categories
                 )
                 await i.followup.send("📁 **Выберите категорию для товара:**", view=view, ephemeral=True)
         
@@ -331,10 +316,14 @@ class LotsMenuView(discord.ui.View):
         class DeleteLotView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=60)
-                options = [discord.SelectOption(label=f"{lot.name} (ID:{lot.lot_id})", value=str(lot.lot_id), description=f"Цена: {lot.price}") for lot in list(lots.values())[:25]]
+                options = []
+                for lot in list(lots.values())[:25]:
+                    options.append(discord.SelectOption(label=f"{lot.name} (ID:{lot.lot_id})", value=str(lot.lot_id), description=f"Цена: {lot.price}"))
+                
                 select = discord.ui.Select(placeholder="Выберите товар для удаления", options=options)
                 select.callback = self.select_callback
                 self.add_item(select)
+                
                 cancel = discord.ui.Button(label="❌ Отмена", style=discord.ButtonStyle.secondary)
                 cancel.callback = self.cancel_callback
                 self.add_item(cancel)

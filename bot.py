@@ -237,15 +237,9 @@ class LotsMenuView(discord.ui.View):
             await interaction.response.send_message("❌ Сначала создайте категорию", ephemeral=True)
             return
         
-        # Получаем курс валют
-        currency_rates = await db.get_currency_rates()
-        if not currency_rates:
-            await interaction.response.send_message("⚠️ Курсы валют не загружены. Попробуйте позже.", ephemeral=True)
-            return
-        
         class AddLotModal(discord.ui.Modal, title="Добавить товар"):
             name = discord.ui.TextInput(label="Название", placeholder="Введите название...", required=True, max_length=100)
-            price_rub = discord.ui.TextInput(label="Цена в рублях", placeholder="1000", required=True, max_length=50)
+            price = discord.ui.TextInput(label="Цена", placeholder="1000 ₽", required=True, max_length=50)
             seller = discord.ui.TextInput(label="Продавец (ID или @ник)", placeholder="Введите ID пользователя или @ник", required=True, max_length=100)
             short_desc = discord.ui.TextInput(label="Краткое описание", placeholder="Коротко о товаре...", required=False, max_length=200)
             full_desc = discord.ui.TextInput(label="Полное описание", placeholder="Подробное описание...", style=discord.TextStyle.paragraph, required=False, max_length=2000)
@@ -255,20 +249,10 @@ class LotsMenuView(discord.ui.View):
                 await i.response.defer(ephemeral=True)
                 
                 # Проверяем цену
-                try:
-                    price_rub_val = float(self.price_rub.value.replace(',', '.'))
-                    if price_rub_val <= 0:
-                        await i.followup.send("❌ Цена должна быть больше 0", ephemeral=True)
-                        return
-                except:
-                    await i.followup.send("❌ Неверный формат цены", ephemeral=True)
+                price_value = self.price.value.strip()
+                if not price_value:
+                    await i.followup.send("❌ Введите цену", ephemeral=True)
                     return
-                
-                # Конвертируем цену
-                converted_prices = await convert_price_rub(price_rub_val)
-                
-                # Формируем строку с ценами
-                price_display = " | ".join([converted_prices.get(curr, "") for curr in ["RUB", "UAH", "USD", "EUR"] if converted_prices.get(curr)])
                 
                 try:
                     stock_val = int(self.stock.value) if self.stock.value else 0
@@ -298,16 +282,15 @@ class LotsMenuView(discord.ui.View):
                     return
                 
                 class CategorySelectView(discord.ui.View):
-                    def __init__(self, lot_name, lot_price_display, lot_short, lot_full, lot_stock, seller_id_val, cats, price_rub_raw):
+                    def __init__(self, lot_name, lot_price, lot_short, lot_full, lot_stock, seller_id_val, cats):
                         super().__init__(timeout=60)
                         self.lot_name = lot_name
-                        self.lot_price_display = lot_price_display
+                        self.lot_price = lot_price
                         self.lot_short = lot_short
                         self.lot_full = lot_full
                         self.lot_stock = lot_stock
                         self.seller_id_val = seller_id_val
                         self.cats = cats
-                        self.price_rub_raw = price_rub_raw
                         
                         options = []
                         for cat in self.cats.values():
@@ -321,22 +304,19 @@ class LotsMenuView(discord.ui.View):
                         cat_id = int(select_interaction.data['values'][0])
                         lot_id = await db.add_lot(
                             name=self.lot_name,
-                            price=self.lot_price_display,
+                            price=self.lot_price,
                             short_description=self.lot_short or "",
                             full_description=self.lot_full or "",
                             seller_id=self.seller_id_val,
                             category_id=cat_id,
                             stock=self.lot_stock
                         )
-                        # Сохраняем цену в рублях для конвертации в lot_prices
-                        await db.update_lot_prices(lot_id, {"RUB": f"{self.price_rub_raw:.0f} ₽"})
-                        
                         await db.refresh_cache()
                         seller_mention = f"<@{self.seller_id_val}>"
                         stock_text = "♾️ Бесконечно" if self.lot_stock == -1 else f"{self.lot_stock} шт."
                         await select_interaction.response.send_message(
                             f"✅ Товар **{self.lot_name}** добавлен!\n"
-                            f"💰 Цена: {self.lot_price_display}\n"
+                            f"💰 Цена: {self.lot_price}\n"
                             f"👤 Продавец: {seller_mention}\n"
                             f"📦 Количество: {stock_text}\n"
                             f"🆔 ID товара: `{lot_id}`",
@@ -349,19 +329,14 @@ class LotsMenuView(discord.ui.View):
                 
                 view = CategorySelectView(
                     lot_name=self.name.value,
-                    lot_price_display=price_display,
+                    lot_price=price_value,
                     lot_short=self.short_desc.value,
                     lot_full=self.full_desc.value,
                     lot_stock=stock_val,
                     seller_id_val=seller_id,
-                    cats=categories,
-                    price_rub_raw=price_rub_val
+                    cats=categories
                 )
-                await i.followup.send(
-                    f"💰 **Цены на товар:**\n{price_display}\n\n📁 **Выберите категорию для товара:**",
-                    view=view,
-                    ephemeral=True
-                )
+                await i.followup.send("📁 **Выберите категорию для товара:**", view=view, ephemeral=True)
         
         await interaction.response.send_modal(AddLotModal())
     
@@ -1316,7 +1291,7 @@ class LotsView(discord.ui.View):
         except Exception as e:
             logger.exception("Ошибка lot_callback")
             await interaction.followup.send("❌ Ошибка при выборе товара", ephemeral=True)
-            
+
     async def close_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:

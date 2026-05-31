@@ -241,8 +241,7 @@ class LotsMenuView(discord.ui.View):
             name = discord.ui.TextInput(label="Название", placeholder="Введите название...", required=True, max_length=100)
             price = discord.ui.TextInput(label="Цена", placeholder="1000 ₽", required=True, max_length=50)
             seller = discord.ui.TextInput(label="Продавец (ID или @ник)", placeholder="Введите ID пользователя или @ник", required=True, max_length=100)
-            short_desc = discord.ui.TextInput(label="Краткое описание", placeholder="Коротко о товаре...", required=False, max_length=200)
-            full_desc = discord.ui.TextInput(label="Полное описание", placeholder="Подробное описание...", style=discord.TextStyle.paragraph, required=False, max_length=2000)
+            full_desc = discord.ui.TextInput(label="Описание", placeholder="Подробное описание товара...", style=discord.TextStyle.paragraph, required=False, max_length=2000)
             stock = discord.ui.TextInput(label="Количество", placeholder="0 (безлимит: -1)", required=False, default="0")
             
             async def on_submit(self, i: discord.Interaction):
@@ -282,11 +281,10 @@ class LotsMenuView(discord.ui.View):
                     return
                 
                 class CategorySelectView(discord.ui.View):
-                    def __init__(self, lot_name, lot_price, lot_short, lot_full, lot_stock, seller_id_val, cats):
+                    def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats):
                         super().__init__(timeout=60)
                         self.lot_name = lot_name
                         self.lot_price = lot_price
-                        self.lot_short = lot_short
                         self.lot_full = lot_full
                         self.lot_stock = lot_stock
                         self.seller_id_val = seller_id_val
@@ -305,7 +303,7 @@ class LotsMenuView(discord.ui.View):
                         lot_id = await db.add_lot(
                             name=self.lot_name,
                             price=self.lot_price,
-                            short_description=self.lot_short or "",
+                            short_description="",
                             full_description=self.lot_full or "",
                             seller_id=self.seller_id_val,
                             category_id=cat_id,
@@ -330,7 +328,6 @@ class LotsMenuView(discord.ui.View):
                 view = CategorySelectView(
                     lot_name=self.name.value,
                     lot_price=price_value,
-                    lot_short=self.short_desc.value,
                     lot_full=self.full_desc.value,
                     lot_stock=stock_val,
                     seller_id_val=seller_id,

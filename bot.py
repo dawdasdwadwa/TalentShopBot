@@ -34,6 +34,7 @@ TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531
 TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
 TICKET_CHANNEL_ID = 1500242313211805788
 BACKUP_CHANNEL_ID = 1503146387129368718
+BACKUP_MAX_MESSAGES = 50
 LOG_CHANNEL_ID = 1509707240792133824
 
 # Каналы для публичного вывода ответов
@@ -59,6 +60,8 @@ CATEGORY_LABELS = {
 
 # ================= АДМИН ПАНЕЛЬ =================
 ADMIN_PANEL_CHANNEL_ID = 1503168213016641536
+
+
 
 class AdminPanelView(discord.ui.View):
     def __init__(self):
@@ -229,6 +232,7 @@ class LotsMenuView(discord.ui.View):
     async def add_lot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await save_backup("shop_update")
             return
         
         await db.refresh_cache()
@@ -341,6 +345,7 @@ class LotsMenuView(discord.ui.View):
     async def delete_lot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await save_backup("shop_update")
             return
         
         await db.refresh_cache()
@@ -461,6 +466,11 @@ class SettingsMenuView(discord.ui.View):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
+        result = await save_backup("manual (admin panel)")
+        if result:
+            await interaction.followup.send("✅ Бэкап создан и отправлен в канал!", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Ошибка создания бэкапа", ephemeral=True)
         
         # Создаём бэкап
         backup_data = {
@@ -1083,6 +1093,68 @@ async def _fetch_channel_safe(channel_id: int, retries: int = 5) -> Optional[dis
         await asyncio.sleep(2)
     return None
 
+BACKUP_CHANNEL_ID = 1503146387129368718
+BACKUP_MAX_MESSAGES = 50
+
+async def rotate_backup_channel(channel):
+    """Удаляет старые сообщения, оставляя только последние BACKUP_MAX_MESSAGES"""
+    try:
+        messages = []
+        async for msg in channel.history(limit=200):
+            if msg.author == bot.user and msg.attachments:
+                messages.append(msg)
+        
+        # Если сообщений больше лимита, удаляем старые
+        if len(messages) > BACKUP_MAX_MESSAGES:
+            to_delete = messages[BACKUP_MAX_MESSAGES:]
+            for msg in to_delete:
+                try:
+                    await msg.delete()
+                    await asyncio.sleep(0.2)
+                except:
+                    pass
+    except Exception as e:
+        logger.error(f"Ошибка ротации бэкапов: {e}")
+
+async def save_backup(reason: str = "manual"):
+    """Создаёт и отправляет бэкап в канал"""
+    try:
+        backup_json = await db.create_backup(bot)
+        if not backup_json:
+            logger.error("Не удалось создать бэкап")
+            return False
+        
+        backup_bytes = backup_json.encode('utf-8')
+        backup_file = discord.File(
+            io.BytesIO(backup_bytes),
+            filename=f"shop_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        
+        channel = bot.get_channel(BACKUP_CHANNEL_ID)
+        if not channel:
+            channel = await bot.fetch_channel(BACKUP_CHANNEL_ID)
+        
+        if channel:
+            await channel.send(f"💾 Бэкап ({reason}) от {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}", file=backup_file)
+            await rotate_backup_channel(channel)
+            logger.info(f"✅ Бэкап сохранён: {reason}")
+            return True
+        else:
+            logger.error(f"Канал бэкапа {BACKUP_CHANNEL_ID} не найден")
+            return False
+    except Exception as e:
+        logger.error(f"Ошибка сохранения бэкапа: {e}")
+        return False
+
+async def auto_backup_task():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            await save_backup("auto (12 hours)")
+        except Exception as e:
+            logger.error(f"Ошибка авто-бэкапа: {e}")
+        await asyncio.sleep(43200)  # 12 часов = 43200 секунд
+
 async def _do_shop_update(guild: discord.Guild):
     config = get_config(guild.id)
     if not config or not config.get("shop_channel"):
@@ -1090,6 +1162,7 @@ async def _do_shop_update(guild: discord.Guild):
     channel = await _fetch_channel_safe(config["shop_channel"])
     if not channel:
         return
+    await save_backup("shop_update")
     await db.refresh_cache()
     
     view = ShopView()
@@ -1120,6 +1193,8 @@ async def _do_shop_update(guild: discord.Guild):
 async def send_or_update_shop(guild: discord.Guild):
     async with _shop_update_lock:
         await _do_shop_update(guild)
+        # Создаём бэкап после изменения магазина
+        await save_backup("shop_update")
 
 # ================= ПОИСК В МАГАЗИНЕ =================
 class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
@@ -1955,6 +2030,7 @@ async def on_ready():
     except Exception as e:
         logger.error(f"❌ Ошибка синхронизации команд: {e}")
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
+    asyncio.create_task(_safe_task(auto_backup_task(), "auto_backup_task"))
     logger.info(f"✅ Бот готов: {bot.user}")
 
 # ================= ОБРАБОТКА СООБЩЕНИЙ В ИИ-КАНАЛАХ =================

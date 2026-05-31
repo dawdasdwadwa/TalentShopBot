@@ -1162,7 +1162,7 @@ async def _do_shop_update(guild: discord.Guild):
     channel = await _fetch_channel_safe(config["shop_channel"])
     if not channel:
         return
-    await save_backup("shop_update")
+    await save_backup("shop_update")    
     await db.refresh_cache()
     
     view = ShopView()

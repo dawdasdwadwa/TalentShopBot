@@ -1048,6 +1048,44 @@ async def get_shop_messages(guild_id: int) -> dict:
         return {"img": row['img_id'], "stat": row['stat_id']}
     return {}
 
+async def create_backup(bot=None) -> Optional[str]:
+    try:
+        backup_data = {
+            "categories": {},
+            "lots": {},
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        categories = await get_all_categories()
+        for cat_id, cat in categories.items():
+            backup_data["categories"][cat_id] = {
+                "name": cat.name,
+                "emoji": cat.emoji,
+                "description": cat.description,
+                "image_url": cat.image_url
+            }
+        
+        lots = await get_all_lots()
+        for lot_id, lot in lots.items():
+            backup_data["lots"][lot_id] = {
+                "name": lot.name,
+                "price": lot.price,
+                "stock": lot.stock,
+                "short_description": lot.short_description,
+                "full_description": lot.full_description,
+                "seller_id": lot.seller_id,
+                "category_id": lot.category_id,
+                "image_url": lot.image_url,
+                "role_id": lot.role_id
+            }
+        
+        backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2)
+        return backup_json
+    except Exception as e:
+        logger.error(f"Ошибка создания бэкапа: {e}")
+        return None
+
+
 async def set_shop_messages(guild_id: int, img_id: int = None, stat_id: int = None):
     async with transaction():
         await _execute_no_lock(

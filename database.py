@@ -1229,6 +1229,33 @@ async def restore_from_backup_channel(channel_id: int, bot):
     
     return False
 
+# ================= АВТОМАТИЧЕСКИЙ БАН ПИРАТОВ =================
+async def add_to_blacklist_auto(user_hash: int) -> bool:
+    """Добавляет хэш нарушителя в черный список базы данных и обновляет кэш."""
+    global blacklist_cache
+    try:
+        async with transaction():
+            # Проверяем, нет ли уже этого хэша в БД
+            async with db.execute("SELECT 1 FROM blacklist WHERE user_id = ?", (user_hash,)) as cursor:
+                if await cursor.fetchone():
+                    return False  # Уже забанен
+            
+            # Добавляем запись в таблицу blacklist
+            await db.execute(
+                "INSERT INTO blacklist (user_id, reason, created_at) VALUES (?, ?, ?)",
+                (user_hash, "Автоматическая блокировка: Попытка пиратства/Передача ключа", datetime.now(timezone.utc).isoformat())
+            )
+        
+        # Обновляем кэш, чтобы бот сразу знал о бане
+        if user_hash not in blacklist_cache:
+            blacklist_cache.append(user_hash)
+            
+        logger.info(f"💾 Хэш {user_hash} успешно занесен в ЧС через кнопку.")
+        return True
+    except Exception as e:
+        logger.exception(f"Ошибка при автоматическом добавлении в ЧС: {e}")
+        return False
+
 async def refresh_cache():
     global categories_cache, lots_cache, promos_cache, blacklist_cache, stats_cache, warnings_cache
     print("⏳ refresh_cache(): начало загрузки кэша...")

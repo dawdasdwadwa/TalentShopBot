@@ -32,7 +32,6 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 AI_CONVEYOR_CHANNEL_ID = 1509333979713769612
 TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531
 TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
-TICKET_CHANNEL_ID = 1500242313211805788
 BACKUP_CHANNEL_ID = 1503146387129368718
 BACKUP_MAX_MESSAGES = 50
 LOG_CHANNEL_ID = 1509707240792133824
@@ -1099,25 +1098,26 @@ BACKUP_MAX_MESSAGES = 50
 async def rotate_backup_channel(channel):
     """Удаляет старые сообщения, оставляя только последние BACKUP_MAX_MESSAGES"""
     try:
+        # Получаем все сообщения бота в канале
         messages = []
         async for msg in channel.history(limit=200):
-            if msg.author == bot.user and msg.attachments:
+            if msg.author == bot.user:
                 messages.append(msg)
         
-        # Если сообщений больше лимита, удаляем старые
+        # Если сообщений больше лимита, удаляем старые (первые в списке)
         if len(messages) > BACKUP_MAX_MESSAGES:
-            to_delete = messages[BACKUP_MAX_MESSAGES:]
+            to_delete = messages[BACKUP_MAX_MESSAGES:]  # старые сообщения
             for msg in to_delete:
                 try:
                     await msg.delete()
-                    await asyncio.sleep(0.2)
-                except:
-                    pass
+                    await asyncio.sleep(0.5)  # задержка чтобы не спамить запросами
+                except Exception as e:
+                    logger.error(f"Ошибка удаления сообщения {msg.id}: {e}")
+            logger.info(f"✅ Удалено {len(to_delete)} старых сообщений бэкапа. Осталось: {BACKUP_MAX_MESSAGES}")
     except Exception as e:
         logger.error(f"Ошибка ротации бэкапов: {e}")
 
 async def save_backup(reason: str = "manual"):
-    """Создаёт и отправляет бэкап в канал"""
     try:
         backup_json = await db.create_backup(bot)
         if not backup_json:
@@ -1136,6 +1136,7 @@ async def save_backup(reason: str = "manual"):
         
         if channel:
             await channel.send(f"💾 Бэкап ({reason}) от {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}", file=backup_file)
+            await asyncio.sleep(1)  # ждём перед ротацией
             await rotate_backup_channel(channel)
             logger.info(f"✅ Бэкап сохранён: {reason}")
             return True
@@ -2029,6 +2030,11 @@ async def on_ready():
         logger.info("✅ Слеш-команды синхронизированы")
     except Exception as e:
         logger.error(f"❌ Ошибка синхронизации команд: {e}")
+    # Регистрация обработчиков для старых кнопок бана пиратов при перезапуске бота
+    # Бот будет сканировать активный кэш черного списка и делать кнопки под ними снова кликабельными
+    for b_hash in db.blacklist_cache:
+        bot.add_view(PiracyBanView(target_hash=b_hash, suspect_name="Пользователь"))
+    logger.info("✅ Зарегистрированы динамические представления для кнопок блокировок.")
     asyncio.create_task(_safe_task(_startup_background(), "_startup_background"))
     asyncio.create_task(_safe_task(auto_backup_task(), "auto_backup_task"))
     logger.info(f"✅ Бот готов: {bot.user}")
@@ -2112,6 +2118,98 @@ async def on_message(message: discord.Message):
             await message.reply(f"❌ Ошибка: {e}")
     
     await bot.process_commands(message)
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    # === ПЕРЕХВАТ ЛОГОВ ПИРАТСТВА ИЗ AHK И ДОБАВЛЕНИЕ КНОПКИ ===
+    # Проверяем, что сообщение пришло в нужный канал логов и содержит ключевой текст пиратства
+    if "ПИРАТСТВО" in message.content or "[ПИРАТСТВО] КЛЮЧ ПЕРЕДАН" in message.content:
+        # Пытаемся вытащить хэш нарушителя из текста сообщения регулярным выражением
+        # Текст в AHK: "[-] HASH нарушителя: 3749007628"
+        hash_match = re.search(r"HASH нарушителя:\s*(\d+)", message.content)
+        name_match = re.search(r"Имя нарушителя:\s*([^\n]+)", message.content)
+        owner_hash_match = re.search(r"HASH законного владельца:\s*(\d+)", message.content)
+        key_match = re.search(r"Слитый Ключ:\s*(\d+)", message.content)
+        
+        if hash_match:
+            suspect_hash = int(hash_match.group(1))
+            suspect_name = name_match.group(1).strip() if name_match else "Неизвестный ПК"
+            owner_hash = owner_hash_match.group(1) if owner_hash_match else "Не определен"
+            leaked_key = key_match.group(1) if key_match else "Не определен"
+            
+            # Сохраняем текущий канал, куда пришел вебхук
+            channel = message.channel
+            
+            # Удаляем стандартное «сырое» сообщение вебхука, чтобы заменить его на красивый Embed
+            try:
+                await message.delete()
+            except discord.HTTPException:
+                pass # Если у бота нет прав на удаление сообщений вебхука
+            
+            # Строим красивую карточку лога для администрации
+            embed = discord.Color.red()
+            embed = discord.Embed(
+                title="🚨 [СИСТЕМА ЗАЩИТЫ] ПОПЫТКА ПИРАТСТВА",
+                description="Обнаружено использование лицензионного ключа на стороннем устройстве!",
+                color=discord.Color.red(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="👤 Нарушитель (ПК)", value=suspect_name, inline=False)
+            embed.add_field(name="🔴 HASH нарушителя", value=f"`{suspect_hash}`", inline=True)
+            embed.add_field(name="🟢 HASH владельца", value=f"`{owner_hash}`", inline=True)
+            embed.add_field(name="🔑 Использованный ключ", value=f"`{leaked_key}`", inline=False)
+            embed.add_field(name="🛠️ Управление", value="Нажмите кнопку ниже, чтобы мгновенно заблокировать этот хэш в базе данных софта.", inline=False)
+            
+            # Создаем View с интерактивной кнопкой бана
+            view = PiracyBanView(target_hash=suspect_hash, suspect_name=suspect_name)
+            
+            # Отправляем готовую карточку с кнопкой в этот же канал
+            await channel.send(embed=embed, view=view)
+            return # Прерываем дальнейшую обработку этого сообщения
+
+# ================= КНОПКА МГНОВЕННОГО БАНА ПИРАТОВ =================
+class PiracyBanView(discord.ui.View):
+    def __init__(self, target_hash: int, suspect_name: str):
+        # Важно установить уникальный custom_id для кнопки, чтобы она работала после перезапуска бота
+        super().__init__(timeout=None)
+        self.target_hash = target_hash
+        self.suspect_name = suspect_name
+
+        # Динамически создаем кнопку с привязанным хэшем нарушителя
+        ban_button = discord.ui.Button(
+            label=f"Забанить HASH: {target_hash}",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"piracy_ban_{target_hash}"
+        )
+        ban_button.callback = self.ban_button_callback
+        self.add_item(ban_button)
+
+    async def ban_button_callback(self, interaction: discord.Interaction):
+        # Разрешаем нажимать только администраторам
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ У вас нет прав администратора для бана.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        
+        # Вызываем функцию добавления в БД, которую мы прописали в database.py
+        success = await db.add_to_blacklist_auto(self.target_hash)
+        
+        if success:
+            # Отключаем кнопку в интерфейсе сообщения, показывая что нарушитель забанен
+            for item in self.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = True
+                    item.label = f"Забанен ✅ ({self.suspect_name})"
+                    item.style = discord.ButtonStyle.secondary
+            
+            await interaction.message.edit(view=self)
+            await interaction.followup.send(f"✅ Хэш `{self.target_hash}` успешно добавлен в ЧС базы данных софта!", ephemeral=True)
+        else:
+            await interaction.followup.send(f"⚠️ Хэш `{self.target_hash}` уже находится в черном списке или произошла ошибка.", ephemeral=True)
 
 @bot.event
 async def on_member_join(member: discord.Member):

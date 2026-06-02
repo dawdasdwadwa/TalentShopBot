@@ -876,7 +876,7 @@ CONFIG = {
         "log_channel": 1500263242465935492,
         "admin_log_channel": 1500275827441532948,
         "shop_channel": 1500275827441532948,
-        "ticket_channel": TICKET_CHANNEL_ID,
+        "ticket_channel": 1500242313211805788,
         "status_channel": 1506750339783725218,
         "roles": {
             "owner": 1500243730618126428,

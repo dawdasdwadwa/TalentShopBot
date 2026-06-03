@@ -1894,9 +1894,11 @@ class WebhookSpamPanel(discord.ui.View):
         
         class SpamModal(discord.ui.Modal, title="Настройка спама через вебхук"):
             webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True, max_length=200)
+            user_id = discord.ui.TextInput(label="ID пользователя для упоминания (опционально)", placeholder="123456789012345678", required=False)
             message = discord.ui.TextInput(label="Текст сообщения", placeholder="Введите текст...", required=True, max_length=2000)
             count = discord.ui.TextInput(label="Количество сообщений", placeholder="100", required=True, default="100")
             delay = discord.ui.TextInput(label="Задержка (секунд)", placeholder="0.05", required=False, default="0.05")
+
             
             async def on_submit(self, i: discord.Interaction):
                 await i.response.defer(ephemeral=True)
@@ -1913,10 +1915,18 @@ class WebhookSpamPanel(discord.ui.View):
                     delay_val = float(self.delay.value) if self.delay.value else 0.05
                     webhook_url = self.webhook_url.value.strip()
                     
+                    # Формируем сообщение с упоминанием если указан ID
+                    message_text = self.message.value
+                    if self.user_id.value:
+                        try:
+                            user_id = int(self.user_id.value)
+                            message_text = f"<@{user_id}> {message_text}"
+                        except:
+                            pass
+                    
                     await i.followup.send(f"🚀 Начинаю спам: {msg_count} сообщений с задержкой {delay_val}с...", ephemeral=True)
                     
-                    # Запускаем спам в фоне
-                    asyncio.create_task(self.run_spam(i, webhook_url, self.message.value, msg_count, delay_val))
+                    asyncio.create_task(self.run_spam(i, webhook_url, message_text, msg_count, delay_val))
                     
                 except ValueError:
                     await i.followup.send("❌ Неверный формат количества или задержки", ephemeral=True)
@@ -1927,21 +1937,28 @@ class WebhookSpamPanel(discord.ui.View):
                     failed = 0
                     
                     for i in range(count):
-                        try:
-                            async with aiohttp.ClientSession() as session:
-                                data = {"content": f"{message} [{i+1}/{count}]"}
-                                async with session.post(webhook_url, json=data) as resp:
-                                    if resp.status in [200, 204]:
-                                        sent += 1
-                                    else:
-                                        failed += 1
-                        except Exception:
+                        success = False
+                        for retry in range(3):  # 3 попытки
+                            try:
+                                async with aiohttp.ClientSession() as session:
+                                    data = {"content": f"{message} [{i+1}/{count}]"}
+                                    async with session.post(webhook_url, json=data) as resp:
+                                        if resp.status in [200, 204]:
+                                            sent += 1
+                                            success = True
+                                            break
+                                        else:
+                                            await asyncio.sleep(0.5)
+                            except Exception:
+                                await asyncio.sleep(0.5)
+                        
+                        if not success:
                             failed += 1
                         
-                        await asyncio.sleep(delay)
+                        # Задержка между сообщениями (минимум 0.2 сек)
+                        await asyncio.sleep(max(delay, 0.2))
                         
-                        # Каждые 100 сообщений уведомляем
-                        if (i + 1) % 100 == 0:
+                        if (i + 1) % 50 == 0:
                             try:
                                 await interaction.followup.send(f"📊 Прогресс: {i+1}/{count} (успешно: {sent}, ошибок: {failed})", ephemeral=True)
                             except:
@@ -1951,8 +1968,6 @@ class WebhookSpamPanel(discord.ui.View):
                     
                 except Exception as e:
                     await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
-        
-        await interaction.response.send_modal(SpamModal())
     
     @discord.ui.button(label="⚡ Быстрый спам (100x)", style=discord.ButtonStyle.primary, custom_id="spam_quick", row=0)
     async def quick_spam_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1962,24 +1977,32 @@ class WebhookSpamPanel(discord.ui.View):
         
         class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
             webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True, max_length=200)
+            user_id = discord.ui.TextInput(label="ID пользователя для упоминания", placeholder="123456789012345678", required=True)
             message = discord.ui.TextInput(label="Текст сообщения", placeholder="Введите текст...", required=True, max_length=2000)
             
             async def on_submit(self, i: discord.Interaction):
                 await i.response.defer(ephemeral=True)
-                asyncio.create_task(self.quick_spam(i, self.webhook_url.value, self.message.value))
+                asyncio.create_task(self.quick_spam(i, self.webhook_url.value, self.user_id.value, self.message.value))
             
-            async def quick_spam(self, interaction, webhook_url, message):
+            async def quick_spam(self, interaction, webhook_url, user_id_str, message):
                 try:
+                    user_id = int(user_id_str)
+                    mention = f"<@{user_id}>"
+                    safe_message = f"{mention} {message}"
+                    
                     async with aiohttp.ClientSession() as session:
-                        tasks = []
                         for i in range(100):
-                            data = {"content": f"{message} [{i+1}/100]"}
-                            tasks.append(session.post(webhook_url, json=data))
-                            if len(tasks) >= 20:
-                                await asyncio.gather(*tasks)
-                                tasks = []
-                        if tasks:
-                            await asyncio.gather(*tasks)
+                            for retry in range(3):
+                                try:
+                                    data = {"content": f"{safe_message} [{i+1}/100]"}
+                                    async with session.post(webhook_url, json=data) as resp:
+                                        if resp.status in [200, 204]:
+                                            break
+                                except:
+                                    pass
+                                await asyncio.sleep(0.3)
+                            await asyncio.sleep(0.25)  # Задержка между сообщениями
+                    
                     await interaction.followup.send("✅ Быстрый спам (100 сообщений) завершён!", ephemeral=True)
                 except Exception as e:
                     await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)

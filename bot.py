@@ -3,6 +3,7 @@ from discord.ui import TextInput, Modal
 from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import app_commands
+import random
 import os
 import re
 import sys
@@ -36,6 +37,7 @@ BACKUP_CHANNEL_ID = 1503146387129368718
 BACKUP_MAX_MESSAGES = 50
 LOG_CHANNEL_ID = 1509707240792133824
 ADMIN_PANEL_CHANNEL_ID = 1503168213016641536
+WEBHOOK_SPAM_CHANNEL_ID = 1511587835734659164
 
 CATEGORY_CHANNELS = {
     "coding": 1509706870141747391,
@@ -1880,233 +1882,376 @@ async def setup_ai_panel():
         logger.error(f"❌ Ошибка отправки панели ИИ-конвейера: {e}")
 
 # ================= ВЕБХУК СПАМ ПАНЕЛЬ =================
+
+# ================= ВЕБХУК СПАМ ПАНЕЛЬ =================
 WEBHOOK_SPAM_CHANNEL_ID = 1511587835734659164
+import random
 
 class WebhookSpamPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
     
-    @discord.ui.button(label="📨 Настроить спам", style=discord.ButtonStyle.danger, custom_id="spam_setup", row=0)
-    async def spam_setup_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="📨 Discohook режим", style=discord.ButtonStyle.danger, custom_id="spam_discohook", row=0)
+    async def discohook_mode_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
-        
-        class SpamModal(discord.ui.Modal, title="Настройка спама через вебхук"):
-            webhook_urls = discord.ui.TextInput(label="URL вебхуков", placeholder="https://discord.com/api/webhooks/... (каждый с новой строки)", required=True, style=discord.TextStyle.paragraph, max_length=2000)
-            user_id = discord.ui.TextInput(label="ID пользователя (опционально)", placeholder="123456789012345678", required=False)
-            message = discord.ui.TextInput(label="Текст сообщения", placeholder="Введите текст...", required=True, max_length=2000)
-            count = discord.ui.TextInput(label="Количество сообщений", placeholder="100", required=True, default="100")
-            delay = discord.ui.TextInput(label="Задержка (секунд)", placeholder="0.2", required=False, default="0.2")
-            mention_all = discord.ui.TextInput(label="@everyone / @here", placeholder="everyone / here / нет", required=False, default="нет")
-            
-            async def on_submit(self, i: discord.Interaction):
-                await i.response.defer(ephemeral=True)
-                
-                try:
-                    msg_count = int(self.count.value)
-                    if msg_count <= 0:
-                        await i.followup.send("❌ Количество должно быть больше 0", ephemeral=True)
-                        return
-                    if msg_count > 5000:
-                        await i.followup.send("⚠️ Максимум 5000 сообщений за раз", ephemeral=True)
-                        return
-                    
-                    delay_val = float(self.delay.value) if self.delay.value else 0.2
-                    if delay_val < 0.2:
-                        delay_val = 0.2
-                    
-                    # Парсим вебхуки (каждый с новой строки)
-                    webhook_list = [url.strip() for url in self.webhook_urls.value.strip().split('\n') if url.strip()]
-                    if not webhook_list:
-                        await i.followup.send("❌ Введите хотя бы один URL вебхука", ephemeral=True)
-                        return
-                    
-                    # Формируем сообщение
-                    message_text = self.message.value
-                    
-                    # Добавляем упоминание пользователя
-                    if self.user_id.value and self.user_id.value.strip():
-                        try:
-                            user_id = int(self.user_id.value.strip())
-                            message_text = f"<@{user_id}> {message_text}"
-                        except:
-                            pass
-                    
-                    # Добавляем @everyone или @here
-                    mention_type = self.mention_all.value.lower().strip()
-                    if mention_type == "everyone":
-                        message_text = f"@everyone {message_text}"
-                    elif mention_type == "here":
-                        message_text = f"@here {message_text}"
-                    
-                    await i.followup.send(f"🚀 Начинаю спам: {msg_count} сообщений через {len(webhook_list)} вебхуков с задержкой {delay_val}с...", ephemeral=True)
-                    
-                    asyncio.create_task(self.run_spam(i, webhook_list, message_text, msg_count, delay_val))
-                    
-                except ValueError:
-                    await i.followup.send("❌ Неверный формат количества или задержки", ephemeral=True)
-            
-            async def run_spam(self, interaction, webhook_list, message, count, delay):
-                try:
-                    total_sent = 0
-                    total_failed = 0
-                    
-                    for i in range(count):
-                        for webhook_url in webhook_list:
-                            success = False
-                            for retry in range(3):
-                                try:
-                                    async with aiohttp.ClientSession() as session:
-                                        data = {"content": message}
-                                        async with session.post(webhook_url, json=data) as resp:
-                                            if resp.status in [200, 204]:
-                                                total_sent += 1
-                                                success = True
-                                                break
-                                            else:
-                                                await asyncio.sleep(0.5)
-                                except Exception:
-                                    await asyncio.sleep(0.5)
-                            
-                            if not success:
-                                total_failed += 1
-                        
-                        await asyncio.sleep(delay)
-                        
-                        if (i + 1) % 20 == 0:
-                            try:
-                                await interaction.followup.send(f"📊 Прогресс: {i+1}/{count} (успешно: {total_sent}, ошибок: {total_failed})", ephemeral=True)
-                            except:
-                                pass
-                    
-                    await interaction.followup.send(f"✅ Спам завершён!\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}", ephemeral=True)
-                    
-                except Exception as e:
-                    await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
-
-
-        class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
-            webhook_urls = discord.ui.TextInput(label="URL вебхуков", placeholder="https://discord.com/api/webhooks/... (каждый с новой строки)", required=True, style=discord.TextStyle.paragraph, max_length=2000)
-            user_id = discord.ui.TextInput(label="ID пользователя (опционально)", placeholder="123456789012345678", required=False)
-            message = discord.ui.TextInput(label="Текст сообщения", placeholder="Введите текст...", required=True, max_length=2000)
-            mention_all = discord.ui.TextInput(label="@everyone / @here", placeholder="everyone / here / нет", required=False, default="нет")
-            
-            async def on_submit(self, i: discord.Interaction):
-                await i.response.defer(ephemeral=True)
-                asyncio.create_task(self.quick_spam(i, self.webhook_urls.value, self.user_id.value, self.message.value, self.mention_all.value))
-            
-            async def quick_spam(self, interaction, webhook_urls_str, user_id_str, message, mention_all):
-                try:
-                    # Парсим вебхуки
-                    webhook_list = [url.strip() for url in webhook_urls_str.strip().split('\n') if url.strip()]
-                    if not webhook_list:
-                        await interaction.followup.send("❌ Введите хотя бы один URL вебхука", ephemeral=True)
-                        return
-                    
-                    # Формируем сообщение
-                    message_text = message
-                    
-                    if user_id_str and user_id_str.strip():
-                        try:
-                            user_id = int(user_id_str.strip())
-                            message_text = f"<@{user_id}> {message_text}"
-                        except:
-                            pass
-                    
-                    mention_type = mention_all.lower().strip()
-                    if mention_type == "everyone":
-                        message_text = f"@everyone {message_text}"
-                    elif mention_type == "here":
-                        message_text = f"@here {message_text}"
-                    
-                    async with aiohttp.ClientSession() as session:
-                        for webhook_url in webhook_list:
-                            for i in range(100):
-                                for retry in range(3):
-                                    try:
-                                        data = {"content": message_text}
-                                        async with session.post(webhook_url, json=data) as resp:
-                                            if resp.status in [200, 204]:
-                                                break
-                                    except:
-                                        pass
-                                    await asyncio.sleep(0.3)
-                                await asyncio.sleep(0.25)
-                    
-                    await interaction.followup.send("✅ Быстрый спам (100 сообщений на каждый вебхук) завершён!", ephemeral=True)
-                except Exception as e:
-                    await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+        modal = DiscohookModal()
+        await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="⚡ Быстрый спам (100x)", style=discord.ButtonStyle.primary, custom_id="spam_quick", row=0)
+    @discord.ui.button(label="⚡ Быстрый спам", style=discord.ButtonStyle.primary, custom_id="spam_quick", row=0)
     async def quick_spam_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
-        
-        class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
-            webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True, max_length=200)
-            user_id = discord.ui.TextInput(label="ID пользователя (опционально)", placeholder="123456789012345678", required=False)
-            message = discord.ui.TextInput(label="Текст сообщения", placeholder="Введите текст...", required=True, max_length=2000)
-            
-            async def on_submit(self, i: discord.Interaction):
-                await i.response.defer(ephemeral=True)
-                asyncio.create_task(self.quick_spam(i, self.webhook_url.value, self.user_id.value, self.message.value))
-            
-            async def quick_spam(self, interaction, webhook_url, user_id_str, message):
-                try:
-                    # Формируем сообщение с упоминанием только если указан ID
-                    message_text = message
-                    if user_id_str and user_id_str.strip():
-                        try:
-                            user_id = int(user_id_str.strip())
-                            message_text = f"<@{user_id}> {message_text}"
-                        except:
-                            pass
-                    
-                    async with aiohttp.ClientSession() as session:
-                        for i in range(100):
-                            for retry in range(3):
-                                try:
-                                    data = {"content": f"{message_text} [{i+1}/100]"}
-                                    async with session.post(webhook_url, json=data) as resp:
-                                        if resp.status in [200, 204]:
-                                            break
-                                except:
-                                    pass
-                                await asyncio.sleep(0.3)
-                            await asyncio.sleep(0.25)
-                    
-                    await interaction.followup.send("✅ Быстрый спам (100 сообщений) завершён!", ephemeral=True)
-                except Exception as e:
-                    await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
-        
-        await interaction.response.send_modal(QuickSpamModal())
+        modal = QuickSpamModal()
+        await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="🛑 Тест вебхука", style=discord.ButtonStyle.secondary, custom_id="spam_test", row=0)
     async def test_webhook_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
+        modal = TestWebhookModal()
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="🎭 Сменить имя", style=discord.ButtonStyle.secondary, custom_id="spam_name", row=1)
+    async def change_name_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = ChangeNameModal()
+        await interaction.response.send_modal(modal)
+
+
+class ChangeNameModal(discord.ui.Modal, title="Смена имени вебхука"):
+    webhook_url = discord.ui.TextInput(
+        label="URL вебхука",
+        placeholder="https://discord.com/api/webhooks/...",
+        required=True,
+        max_length=200
+    )
+    new_name = discord.ui.TextInput(
+        label="Новое имя",
+        placeholder="Новое имя вебхука",
+        required=True,
+        max_length=80
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(self.webhook_url.value, json={"name": self.new_name.value}) as resp:
+                    if resp.status in [200, 204]:
+                        await interaction.followup.send(f"✅ Имя вебхука изменено на **{self.new_name.value}**", ephemeral=True)
+                    else:
+                        await interaction.followup.send(f"❌ Ошибка: статус {resp.status}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
+    webhooks = discord.ui.TextInput(
+        label="Вебхуки (каждый с новой строки)",
+        placeholder="https://discord.com/api/webhooks/123/abc\nhttps://discord.com/api/webhooks/456/def",
+        required=True,
+        style=discord.TextStyle.paragraph,
+        max_length=3000
+    )
+    messages_list = discord.ui.TextInput(
+        label="Сообщения (каждое с новой строки)",
+        placeholder="Сообщение 1\nСообщение 2\nСообщение 3",
+        required=False,
+        style=discord.TextStyle.paragraph,
+        max_length=4000
+    )
+    embed_title = discord.ui.TextInput(
+        label="Заголовок эмбеда",
+        placeholder="Опционально",
+        required=False,
+        max_length=256
+    )
+    embed_desc = discord.ui.TextInput(
+        label="Описание эмбеда",
+        placeholder="Опционально",
+        required=False,
+        max_length=4000,
+        style=discord.TextStyle.paragraph
+    )
+    image_url = discord.ui.TextInput(
+        label="URL картинки",
+        placeholder="https://example.com/image.png",
+        required=False
+    )
+    mention_id = discord.ui.TextInput(
+        label="ID для упоминания",
+        placeholder="123456789012345678",
+        required=False
+    )
+    loop = discord.ui.TextInput(
+        label="Количество циклов",
+        placeholder="1 (0 - бесконечно)",
+        required=False,
+        default="1"
+    )
+    delay_min = discord.ui.TextInput(
+        label="Мин. задержка (сек)",
+        placeholder="0.1",
+        required=False,
+        default="0.1"
+    )
+    delay_max = discord.ui.TextInput(
+        label="Макс. задержка (сек)",
+        placeholder="0.5",
+        required=False,
+        default="0.5"
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         
-        class TestModal(discord.ui.Modal, title="Тест вебхука"):
-            webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True, max_length=200)
-            message = discord.ui.TextInput(label="Тестовое сообщение", placeholder="Тест", required=False, default="Тестовое сообщение")
+        webhook_list = [url.strip() for url in self.webhooks.value.split('\n') if url.strip()]
+        if not webhook_list:
+            await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
+            return
+        
+        message_list = [m.strip() for m in self.messages_list.value.split('\n') if m.strip()] if self.messages_list.value else []
+        
+        try:
+            loop_count = int(self.loop.value) if self.loop.value else 1
+            infinite = loop_count == 0
+        except:
+            loop_count = 1
+            infinite = False
+        
+        try:
+            delay_min = float(self.delay_min.value) if self.delay_min.value else 0.1
+            delay_max = float(self.delay_max.value) if self.delay_max.value else 0.5
+        except:
+            delay_min = 0.1
+            delay_max = 0.5
+        
+        payload = {}
+        
+        if message_list:
+            payload["content"] = message_list[0]  # Первое сообщение как стартовое
+        
+        if self.embed_title.value or self.embed_desc.value:
+            embed = {}
+            if self.embed_title.value:
+                embed["title"] = self.embed_title.value
+            if self.embed_desc.value:
+                embed["description"] = self.embed_desc.value
+            if self.image_url.value:
+                embed["image"] = {"url": self.image_url.value}
+            embed["color"] = 0xFF0000
+            payload["embeds"] = [embed]
+        
+        if not payload and not message_list:
+            await interaction.followup.send("❌ Заполните хотя бы текст или эмбед", ephemeral=True)
+            return
+        
+        stats_msg = await interaction.followup.send("🔄 Запуск спама...", ephemeral=True)
+        
+        total_sent = 0
+        total_failed = 0
+        cycle = 0
+        
+        while infinite or cycle < loop_count:
+            cycle += 1
+            for webhook_url in webhook_list:
+                for msg in message_list if message_list else [""]:
+                    final_msg = msg
+                    if self.mention_id.value and self.mention_id.value.strip():
+                        try:
+                            uid = int(self.mention_id.value.strip())
+                            final_msg = f"<@{uid}> {final_msg}"
+                        except:
+                            pass
+                    
+                    payload_copy = payload.copy()
+                    if final_msg:
+                        payload_copy["content"] = final_msg
+                    
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(webhook_url, json=payload_copy) as resp:
+                                if resp.status in [200, 204]:
+                                    total_sent += 1
+                                else:
+                                    total_failed += 1
+                    except Exception:
+                        total_failed += 1
+                    
+                    delay = random.uniform(delay_min, delay_max)
+                    await asyncio.sleep(delay)
+                    
+                    # Обновляем статистику каждые 10 отправок
+                    if (total_sent + total_failed) % 10 == 0:
+                        try:
+                            await stats_msg.edit(content=f"📊 **Прогресс**\n🔄 Цикл: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}\n⏱️ Задержка: {delay:.2f}с")
+                        except:
+                            pass
             
-            async def on_submit(self, i: discord.Interaction):
-                await i.response.defer(ephemeral=True)
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        data = {"content": f"🧪 {self.message.value} [ТЕСТ]"}
-                        async with session.post(self.webhook_url.value, json=data) as resp:
-                            if resp.status in [200, 204]:
-                                await i.followup.send("✅ Вебхук работает! Тестовое сообщение отправлено.", ephemeral=True)
-                            else:
-                                await i.followup.send(f"❌ Ошибка: статус {resp.status}", ephemeral=True)
-                except Exception as e:
-                    await i.followup.send(f"❌ Не удалось подключиться к вебхуку: {e}", ephemeral=True)
+            if infinite and not message_list:
+                break
         
-        await interaction.response.send_modal(TestModal())
+        await interaction.followup.send(
+            f"✅ **Discohook режим завершён!**\n🔄 Циклов: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}",
+            ephemeral=True
+        )
+
+
+class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
+    webhooks = discord.ui.TextInput(
+        label="Вебхуки (каждый с новой строки)",
+        placeholder="https://discord.com/api/webhooks/123/abc\nhttps://discord.com/api/webhooks/456/def",
+        required=True,
+        style=discord.TextStyle.paragraph,
+        max_length=3000
+    )
+    messages_list = discord.ui.TextInput(
+        label="Сообщения (каждое с новой строки)",
+        placeholder="Сообщение 1\nСообщение 2\nСообщение 3",
+        required=True,
+        style=discord.TextStyle.paragraph,
+        max_length=4000
+    )
+    count = discord.ui.TextInput(
+        label="Количество на вебхук",
+        placeholder="100",
+        required=True,
+        default="100"
+    )
+    mention_id = discord.ui.TextInput(
+        label="ID для упоминания",
+        placeholder="123456789012345678",
+        required=False
+    )
+    mention_all = discord.ui.TextInput(
+        label="@everyone / @here",
+        placeholder="everyone / here / нет",
+        required=False,
+        default="нет"
+    )
+    random_order = discord.ui.TextInput(
+        label="Случайный порядок",
+        placeholder="да/нет",
+        required=False,
+        default="да"
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            msg_count = int(self.count.value)
+            if msg_count <= 0:
+                await interaction.followup.send("❌ Количество должно быть больше 0", ephemeral=True)
+                return
+            if msg_count > 5000:
+                await interaction.followup.send("⚠️ Максимум 5000 сообщений на вебхук", ephemeral=True)
+                return
+        except ValueError:
+            await interaction.followup.send("❌ Неверный формат количества", ephemeral=True)
+            return
+        
+        webhook_list = [url.strip() for url in self.webhooks.value.split('\n') if url.strip()]
+        if not webhook_list:
+            await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
+            return
+        
+        message_list = [m.strip() for m in self.messages_list.value.split('\n') if m.strip()]
+        if not message_list:
+            await interaction.followup.send("❌ Введите хотя бы одно сообщение", ephemeral=True)
+            return
+        
+        random_order_flag = self.random_order.value.lower().strip() in ["да", "yes", "true", "1"]
+        
+        mention_type = self.mention_all.value.lower().strip()
+        
+        total_sent = 0
+        
+        # Расширяем список сообщений до нужного количества
+        final_messages = []
+        for i in range(msg_count):
+            if random_order_flag:
+                idx = random.randint(0, len(message_list) - 1)
+                msg = message_list[idx]
+            else:
+                msg = message_list[i % len(message_list)]
+            
+            if self.mention_id.value and self.mention_id.value.strip():
+                try:
+                    uid = int(self.mention_id.value.strip())
+                    msg = f"<@{uid}> {msg}"
+                except:
+                    pass
+            
+            if mention_type == "everyone":
+                msg = f"@everyone {msg}"
+            elif mention_type == "here":
+                msg = f"@here {msg}"
+            
+            final_messages.append(msg)
+        
+        stats_msg = await interaction.followup.send("🔄 Запуск быстрого спама...", ephemeral=True)
+        
+        async with aiohttp.ClientSession() as session:
+            for webhook_url in webhook_list:
+                for i, msg in enumerate(final_messages):
+                    for retry in range(3):
+                        try:
+                            data = {"content": msg}
+                            async with session.post(webhook_url, json=data) as resp:
+                                if resp.status in [200, 204]:
+                                    total_sent += 1
+                                    break
+                        except:
+                            pass
+                        await asyncio.sleep(0.2)
+                    
+                    if (i + 1) % 50 == 0:
+                        try:
+                            await stats_msg.edit(content=f"📊 Прогресс: {i+1}/{msg_count} на вебхуке\n📨 Отправлено: {total_sent}")
+                        except:
+                            pass
+                    await asyncio.sleep(0.15)
+        
+        await interaction.followup.send(
+            f"✅ **Быстрый спам завершён!**\n📨 Отправлено: {total_sent}",
+            ephemeral=True
+        )
+
+
+class TestWebhookModal(discord.ui.Modal, title="Тест вебхука"):
+    webhook_url = discord.ui.TextInput(
+        label="URL вебхука",
+        placeholder="https://discord.com/api/webhooks/...",
+        required=True,
+        max_length=200
+    )
+    message = discord.ui.TextInput(
+        label="Тестовое сообщение",
+        placeholder="Тест",
+        required=False,
+        default="Тестовое сообщение"
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = {"content": f"🧪 {self.message.value}"}
+                async with session.post(self.webhook_url.value, json=data) as resp:
+                    if resp.status in [200, 204]:
+                        await interaction.followup.send("✅ Вебхук работает! Тестовое сообщение отправлено.", ephemeral=True)
+                    else:
+                        await interaction.followup.send(f"❌ Ошибка: статус {resp.status}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Не удалось подключиться к вебхуку: {e}", ephemeral=True)
+
 
 async def setup_webhook_spam_panel():
     channel = bot.get_channel(WEBHOOK_SPAM_CHANNEL_ID)
@@ -2127,9 +2272,10 @@ async def setup_webhook_spam_panel():
     embed = discord.Embed(
         title="💣 ВЕБХУК СПАМ ПАНЕЛЬ",
         description="**Управление спамом через вебхуки**\n\n"
-                    "📨 **Настроить спам** - полная настройка (текст, кол-во, задержка)\n"
-                    "⚡ **Быстрый спам** - моментально 100 сообщений\n"
-                    "🛑 **Тест вебхука** - проверить работает ли вебхук\n\n"
+                    "📨 **Discohook режим** - эмбеды, картинки, ротация сообщений, бесконечный цикл\n"
+                    "⚡ **Быстрый спам** - массовая отправка, случайный порядок сообщений\n"
+                    "🎭 **Сменить имя** - изменить имя вебхука\n"
+                    "🛑 **Тест вебхука** - проверить работоспособность\n\n"
                     "⚠️ Используйте в образовательных целях",
         color=discord.Color.red()
     )
@@ -2149,7 +2295,7 @@ async def _startup_background():
     try:
         await setup_webhook_spam_panel()
         logger.info("✅ Вебхук спам панель настроена")
-    except Exception as e:
+    except Exception as e:  
         logger.error(f"❌ Ошибка настройки спам панели: {e}")
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)

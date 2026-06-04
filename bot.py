@@ -1223,6 +1223,124 @@ async def list_lots(interaction: discord.Interaction):
     await send_or_update_shop(interaction.guild)
     await interaction.followup.send("✅ Магазин обновлён", ephemeral=True)
 
+@bot.tree.command(name='restore_backup', description='[OWNER] Восстановить сервер из JSON бэкапа')
+async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str, clear_existing: str = "нет"):
+    if not is_owner(interaction):
+        await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    
+    try:
+        backup_data = json.loads(backup_json)
+        guild = interaction.guild
+        clear_flag = clear_existing.lower().strip() in ["да", "yes", "true", "1"]
+        
+        if clear_flag:
+            for channel in guild.channels:
+                try:
+                    await channel.delete()
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            for role in guild.roles:
+                if role.name == "@everyone" or role.managed:
+                    continue
+                try:
+                    await role.delete()
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+        
+        # Восстанавливаем настройки
+        if backup_data.get("name"):
+            await guild.edit(name=backup_data["name"])
+        
+        # Восстанавливаем роли
+        role_positions = {}
+        for role_data in backup_data.get("roles", []):
+            try:
+                new_role = await guild.create_role(
+                    name=role_data["name"],
+                    color=role_data["color"],
+                    permissions=discord.Permissions(role_data["permissions"]),
+                    hoist=role_data["hoist"],
+                    mentionable=role_data["mentionable"]
+                )
+                role_positions[role_data["position"]] = new_role
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        
+        for pos in sorted(role_positions.keys(), reverse=True):
+            try:
+                await role_positions[pos].edit(position=pos)
+            except:
+                pass
+        
+        # Восстанавливаем категории и каналы
+        category_map = {}
+        for cat_data in backup_data.get("categories", []):
+            try:
+                new_category = await guild.create_category(
+                    name=cat_data["name"],
+                    position=cat_data["position"]
+                )
+                category_map[cat_data["name"]] = new_category
+                
+                for channel_data in cat_data.get("channels", []):
+                    try:
+                        if channel_data["type"] == "text":
+                            await new_category.create_text_channel(
+                                name=channel_data["name"],
+                                position=channel_data["position"],
+                                topic=channel_data.get("topic"),
+                                slowmode_delay=channel_data.get("slowmode_delay", 0),
+                                nsfw=channel_data.get("nsfw", False)
+                            )
+                        elif channel_data["type"] == "voice":
+                            await new_category.create_voice_channel(
+                                name=channel_data["name"],
+                                position=channel_data["position"],
+                                bitrate=min(channel_data.get("bitrate", 64000), 96000),
+                                user_limit=channel_data.get("user_limit", 0)
+                            )
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        
+        for channel_data in backup_data.get("channels", []):
+            try:
+                if channel_data["type"] == "text":
+                    await guild.create_text_channel(
+                        name=channel_data["name"],
+                        position=channel_data["position"],
+                        topic=channel_data.get("topic"),
+                        slowmode_delay=channel_data.get("slowmode_delay", 0),
+                        nsfw=channel_data.get("nsfw", False)
+                    )
+                elif channel_data["type"] == "voice":
+                    await guild.create_voice_channel(
+                        name=channel_data["name"],
+                        position=channel_data["position"],
+                        bitrate=min(channel_data.get("bitrate", 64000), 96000),
+                        user_limit=channel_data.get("user_limit", 0)
+                    )
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        
+        await interaction.followup.send(f"✅ **Бэкап восстановлен на сервер `{guild.name}`!**", ephemeral=True)
+        
+    except json.JSONDecodeError:
+        await interaction.followup.send("❌ Неверный формат JSON", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
 # ================= ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_cleanup_tickets():
     await bot.wait_until_ready()
@@ -2905,7 +3023,7 @@ async def setup_copy_panel():
     view = CopyServerPanel()
     await channel.send(embed=embed, view=view)
     logger.info("✅ Панель копирования сервера отправлена")
-    
+
 # ================= ЗАПУСК =================
 async def _safe_task(coro, name: str):
     try:

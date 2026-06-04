@@ -1927,11 +1927,11 @@ class WebhookSpamPanel(discord.ui.View):
             return
         global spam_stop_flag
         spam_stop_flag = True
-        await interaction.response.send_message("🛑 Остановка...", ephemeral=True)
+        await interaction.response.send_message("🛑 Остановка спама...", ephemeral=True)
 
 
 class ChangeNameModal(discord.ui.Modal, title="Смена имени"):
-    webhook_url = discord.ui.TextInput(label="URL", placeholder="https://discord.com/api/webhooks/...", required=True)
+    webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True)
     new_name = discord.ui.TextInput(label="Новое имя", placeholder="Имя вебхука", required=True)
     
     async def on_submit(self, interaction: discord.Interaction):
@@ -1947,61 +1947,102 @@ class ChangeNameModal(discord.ui.Modal, title="Смена имени"):
             await interaction.followup.send(f"❌ {e}", ephemeral=True)
 
 
-class ClearWebhookModal(discord.ui.Modal, title="Очистка"):
-    webhook_url = discord.ui.TextInput(label="URL", placeholder="https://discord.com/api/webhooks/...", required=True)
-    count = discord.ui.TextInput(label="Кол-во", placeholder="100 (0 - все)", default="100")
+class ClearWebhookModal(discord.ui.Modal, title="Очистка вебхука"):
+    webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True)
+    count = discord.ui.TextInput(label="Кол-во сообщений", placeholder="100 (0 - все)", default="100")
     
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            parts = self.webhook_url.value.split('/')
+            # Извлекаем ID и токен из URL
+            url = self.webhook_url.value.strip()
+            parts = url.split('/')
             webhook_id = parts[-2]
             webhook_token = parts[-1]
-            del_count = int(self.count.value) if self.count.value else 100
+            
+            try:
+                del_count = int(self.count.value) if self.count.value else 100
+            except:
+                del_count = 100
+            
             deleted = 0
             async with aiohttp.ClientSession() as session:
                 while True:
                     async with session.get(f"https://discord.com/api/v10/webhooks/{webhook_id}/{webhook_token}/messages?limit=100") as resp:
+                        if resp.status == 404:
+                            await interaction.followup.send("❌ Вебхук не найден или недействителен", ephemeral=True)
+                            return
                         if resp.status != 200:
-                            break
+                            await interaction.followup.send(f"❌ Ошибка API: {resp.status}", ephemeral=True)
+                            return
                         messages = await resp.json()
                         if not messages:
                             break
                         for msg in messages:
                             if del_count > 0 and deleted >= del_count:
                                 break
-                            await session.delete(f"https://discord.com/api/v10/webhooks/{webhook_id}/{webhook_token}/messages/{msg['id']}")
-                            deleted += 1
+                            async with session.delete(f"https://discord.com/api/v10/webhooks/{webhook_id}/{webhook_token}/messages/{msg['id']}") as del_resp:
+                                if del_resp.status in [200, 204]:
+                                    deleted += 1
+                                await asyncio.sleep(0.2)
                         if del_count > 0 and deleted >= del_count:
                             break
                         if len(messages) < 100:
                             break
                         await asyncio.sleep(0.5)
-            await interaction.followup.send(f"✅ Удалено: {deleted}", ephemeral=True)
+            
+            if deleted == 0:
+                await interaction.followup.send("✅ Сообщений для удаления не найдено", ephemeral=True)
+            else:
+                await interaction.followup.send(f"✅ Удалено сообщений: {deleted}", ephemeral=True)
+                
         except Exception as e:
-            await interaction.followup.send(f"❌ {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 
-class DiscohookModal(discord.ui.Modal, title="Discohook"):
-    webhooks = discord.ui.TextInput(label="Вебхуки", placeholder="https://... (каждый с новой строки)", required=True, style=discord.TextStyle.paragraph)
-    messages = discord.ui.TextInput(label="Сообщения", placeholder="Текст 1\nТекст 2\nТекст 3", required=True, style=discord.TextStyle.paragraph)
-    embed = discord.ui.TextInput(label="Эмбед", placeholder="Заголовок | Описание | URL | Футер", required=False)
-    settings = discord.ui.TextInput(label="Настройки", placeholder="Циклы | Задержка | Потоки", required=False, default="0 | 0.1 | 1")
-    mention = discord.ui.TextInput(label="Упоминание", placeholder="ID / everyone / here", required=False)
+class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
+    webhooks = discord.ui.TextInput(
+        label="Вебхуки (каждый с новой строки)",
+        placeholder="https://discord.com/api/webhooks/...\nhttps://discord.com/api/webhooks/...",
+        required=True,
+        style=discord.TextStyle.paragraph
+    )
+    messages = discord.ui.TextInput(
+        label="Сообщения (каждое с новой строки)",
+        placeholder="Текст 1\nТекст 2\nТекст 3",
+        required=True,
+        style=discord.TextStyle.paragraph
+    )
+    embed = discord.ui.TextInput(
+        label="Эмбед: Заголовок | Описание | URL | Футер",
+        placeholder="Заголовок | Описание | https://image.png | Текст внизу",
+        required=False
+    )
+    settings = discord.ui.TextInput(
+        label="Настройки: Циклы | Задержка | Потоки | Цвет",
+        placeholder="0 | 0.1 | 1 | RED",
+        required=False,
+        default="0 | 0.1 | 1 | RANDOM"
+    )
+    mention = discord.ui.TextInput(
+        label="Упоминание (ID / everyone / here)",
+        placeholder="123456789 или everyone или here",
+        required=False
+    )
     
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         global spam_stop_flag
         spam_stop_flag = False
         
         webhook_list = [u.strip() for u in self.webhooks.value.split('\n') if u.strip()]
         if not webhook_list:
-            await interaction.followup.send("❌ Введите вебхук", ephemeral=True)
+            await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
             return
         
         msg_list = [m.strip() for m in self.messages.value.split('\n') if m.strip()]
         if not msg_list:
-            await interaction.followup.send("❌ Введите сообщение", ephemeral=True)
+            await interaction.followup.send("❌ Введите хотя бы одно сообщение", ephemeral=True)
             return
         
         parts = self.settings.value.split('|')
@@ -2018,6 +2059,16 @@ class DiscohookModal(discord.ui.Modal, title="Discohook"):
         except:
             threads = 1
         
+        # Парсим цвет эмбеда
+        color_str = parts[3].strip().upper() if len(parts) > 3 else "RANDOM"
+        color_map = {
+            "RED": 0xFF0000, "GREEN": 0x00FF00, "BLUE": 0x0000FF,
+            "YELLOW": 0xFFFF00, "PURPLE": 0x800080, "ORANGE": 0xFFA500,
+            "PINK": 0xFF69B4, "CYAN": 0x00FFFF, "WHITE": 0xFFFFFF,
+            "BLACK": 0x000000, "RANDOM": None
+        }
+        embed_color = color_map.get(color_str, 0xFF0000) if color_str != "RANDOM" else None
+        
         infinite = loop_count == 0
         mention_val = self.mention.value.strip().lower()
         mention_id = None
@@ -2032,24 +2083,27 @@ class DiscohookModal(discord.ui.Modal, title="Discohook"):
         
         embed_payload = None
         if self.embed.value:
-            parts_e = self.embed.value.split('|')
+            embed_parts = self.embed.value.split('|')
             edata = {}
-            if len(parts_e) > 0 and parts_e[0].strip():
-                edata["title"] = parts_e[0].strip()
-            if len(parts_e) > 1 and parts_e[1].strip():
-                edata["description"] = parts_e[1].strip()
-            if len(parts_e) > 2 and parts_e[2].strip():
-                edata["image"] = {"url": parts_e[2].strip()}
-            if len(parts_e) > 3 and parts_e[3].strip():
-                edata["footer"] = {"text": parts_e[3].strip()}
+            if len(embed_parts) > 0 and embed_parts[0].strip():
+                edata["title"] = embed_parts[0].strip()
+            if len(embed_parts) > 1 and embed_parts[1].strip():
+                edata["description"] = embed_parts[1].strip()
+            if len(embed_parts) > 2 and embed_parts[2].strip():
+                edata["image"] = {"url": embed_parts[2].strip()}
+            if len(embed_parts) > 3 and embed_parts[3].strip():
+                edata["footer"] = {"text": embed_parts[3].strip()}
             if edata:
-                edata["color"] = random.randint(0, 0xFFFFFF)
+                if embed_color is None:
+                    edata["color"] = random.randint(0, 0xFFFFFF)
+                else:
+                    edata["color"] = embed_color
                 embed_payload = [edata]
         
         total_sent = 0
         total_failed = 0
         cycle = 0
-        await interaction.followup.send("🔄 Запуск...", ephemeral=True)
+        stats_msg = await interaction.followup.send(f"🔄 Запуск на {threads} потоках...", ephemeral=True)
         
         async def worker(url):
             nonlocal total_sent, total_failed
@@ -2061,7 +2115,7 @@ class DiscohookModal(discord.ui.Modal, title="Discohook"):
                     msg = f"<@{mention_id}> {msg}"
                 elif mention_type:
                     msg = f"@{mention_type} {msg}"
-                payload = {"content": msg}
+                payload = {"content": msg} if msg else {}
                 if embed_payload:
                     payload["embeds"] = embed_payload
                 try:
@@ -2075,46 +2129,76 @@ class DiscohookModal(discord.ui.Modal, title="Discohook"):
                     total_failed += 1
                 await asyncio.sleep(delay)
         
-        async with aiohttp.ClientSession() as session:
-            while not spam_stop_flag and (infinite or cycle < loop_count):
-                cycle += 1
-                tasks = []
-                for url in webhook_list:
-                    for _ in range(threads):
-                        tasks.append(asyncio.create_task(worker(url)))
-                await asyncio.gather(*tasks)
-                if infinite and not spam_stop_flag:
-                    await asyncio.sleep(1)
+        while not spam_stop_flag and (infinite or cycle < loop_count):
+            cycle += 1
+            tasks = []
+            for url in webhook_list:
+                for _ in range(threads):
+                    tasks.append(asyncio.create_task(worker(url)))
+            await asyncio.gather(*tasks)
+            if cycle % 5 == 0:
+                try:
+                    await stats_msg.edit(content=f"📊 Цикл: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}")
+                except:
+                    pass
+            if infinite and not spam_stop_flag:
+                await asyncio.sleep(1)
         
-        await interaction.followup.send(f"✅ Циклов: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}", ephemeral=True)
+        if spam_stop_flag:
+            await interaction.followup.send(f"🛑 **Спам остановлен!** Циклов: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ **Готово!** Циклов: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}", ephemeral=True)
 
 
-class QuickSpamModal(discord.ui.Modal, title="Быстрый"):
-    webhooks = discord.ui.TextInput(label="Вебхуки", placeholder="https://... (каждый с новой строки)", required=True, style=discord.TextStyle.paragraph)
-    messages = discord.ui.TextInput(label="Сообщения", placeholder="Текст 1\nТекст 2", required=True, style=discord.TextStyle.paragraph)
-    count = discord.ui.TextInput(label="Кол-во", placeholder="100", default="100")
-    mention = discord.ui.TextInput(label="Упоминание", placeholder="ID / everyone / here", required=False)
-    random_order = discord.ui.TextInput(label="Случайный", placeholder="да/нет", default="да")
+class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
+    webhooks = discord.ui.TextInput(
+        label="Вебхуки (каждый с новой строки)",
+        placeholder="https://discord.com/api/webhooks/...\nhttps://discord.com/api/webhooks/...",
+        required=True,
+        style=discord.TextStyle.paragraph
+    )
+    messages = discord.ui.TextInput(
+        label="Сообщения (каждое с новой строки)",
+        placeholder="Текст 1\nТекст 2\nТекст 3",
+        required=True,
+        style=discord.TextStyle.paragraph
+    )
+    count = discord.ui.TextInput(
+        label="Количество сообщений",
+        placeholder="100",
+        default="100"
+    )
+    mention = discord.ui.TextInput(
+        label="Упоминание (ID / everyone / here)",
+        placeholder="123456789 или everyone или here",
+        required=False
+    )
+    random_order = discord.ui.TextInput(
+        label="Случайный порядок",
+        placeholder="да/нет",
+        default="да"
+    )
     
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
         try:
             cnt = int(self.count.value)
-            if cnt <= 0 or cnt > 2000:
-                await interaction.followup.send("❌ 1-2000", ephemeral=True)
+            if cnt <= 0 or cnt > 5000:
+                await interaction.followup.send("❌ Количество от 1 до 5000", ephemeral=True)
                 return
         except:
-            await interaction.followup.send("❌ Неверно", ephemeral=True)
+            await interaction.followup.send("❌ Неверный формат количества", ephemeral=True)
             return
         
         webhook_list = [u.strip() for u in self.webhooks.value.split('\n') if u.strip()]
         if not webhook_list:
-            await interaction.followup.send("❌ Введите вебхук", ephemeral=True)
+            await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
             return
         
         msg_list = [m.strip() for m in self.messages.value.split('\n') if m.strip()]
         if not msg_list:
-            await interaction.followup.send("❌ Введите сообщение", ephemeral=True)
+            await interaction.followup.send("❌ Введите хотя бы одно сообщение", ephemeral=True)
             return
         
         random_flag = self.random_order.value.lower().strip() in ["да", "yes", "true", "1"]
@@ -2129,8 +2213,8 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый"):
             elif mention_val == "here":
                 mention_type = "here"
         
-        total = 0
-        await interaction.followup.send("🔄 Запуск...", ephemeral=True)
+        total_sent = 0
+        stats_msg = await interaction.followup.send("🔄 Запуск быстрого спама...", ephemeral=True)
         
         async with aiohttp.ClientSession() as session:
             for url in webhook_list:
@@ -2147,14 +2231,19 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый"):
                         try:
                             async with session.post(url, json={"content": msg}) as resp:
                                 if resp.status in [200, 204]:
-                                    total += 1
+                                    total_sent += 1
                                     break
                         except:
                             pass
                         await asyncio.sleep(0.2)
-                    await asyncio.sleep(0.1)
+                    if (i + 1) % 100 == 0:
+                        try:
+                            await stats_msg.edit(content=f"📊 Прогресс: {i+1}/{cnt} | Отправлено: {total_sent}")
+                        except:
+                            pass
+                    await asyncio.sleep(0.15)
         
-        await interaction.followup.send(f"✅ Отправлено: {total}", ephemeral=True)
+        await interaction.followup.send(f"✅ **Готово!** Отправлено: {total_sent}", ephemeral=True)
 
 
 async def setup_webhook_spam_panel():
@@ -2162,15 +2251,30 @@ async def setup_webhook_spam_panel():
     if not channel:
         try:
             channel = await bot.fetch_channel(WEBHOOK_SPAM_CHANNEL_ID)
-        except:
+        except Exception as e:
+            logger.error(f"Канал {WEBHOOK_SPAM_CHANNEL_ID} не найден: {e}")
             return
     
-    async for msg in channel.history(limit=50):
-        if msg.author == bot.user:
-            await msg.delete()
+    try:
+        async for msg in channel.history(limit=50):
+            if msg.author == bot.user:
+                await msg.delete()
+    except:
+        pass
     
-    embed = discord.Embed(title="💣 ВЕБХУК ПАНЕЛЬ", description="📨 Discohook | ⚡ Быстрый | 🎭 Сменить имя | 🗑️ Очистка | 🛑 Стоп", color=discord.Color.red())
-    await channel.send(embed=embed, view=WebhookSpamPanel())
+    embed = discord.Embed(
+        title="💣 ВЕБХУК СПАМ ПАНЕЛЬ",
+        description="📨 **Discohook** - эмбеды, настройка цвета, бесконечный цикл\n"
+                    "⚡ **Быстрый** - массовая отправка\n"
+                    "🎭 **Сменить имя** - изменить имя вебхука\n"
+                    "🗑️ **Очистка** - удалить сообщения вебхука\n"
+                    "🛑 **Стоп** - остановить бесконечный спам\n\n"
+                    "**Цвета:** RED, GREEN, BLUE, YELLOW, PURPLE, ORANGE, PINK, CYAN, WHITE, RANDOM",
+        color=discord.Color.red()
+    )
+    view = WebhookSpamPanel()
+    await channel.send(embed=embed, view=view)
+    logger.info("✅ Вебхук спам панель отправлена")
 
 # ================= ЗАПУСК =================
 async def _safe_task(coro, name: str):

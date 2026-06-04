@@ -1223,8 +1223,8 @@ async def list_lots(interaction: discord.Interaction):
     await send_or_update_shop(interaction.guild)
     await interaction.followup.send("✅ Магазин обновлён", ephemeral=True)
 
-@bot.tree.command(name='restore_server_backup', description='[OWNER] Восстановить сервер из JSON бэкапа')
-async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str, clear_existing: str = "нет"):
+@bot.tree.command(name='load_backup_json', description='[OWNER] Восстановить сервер из JSON бэкапа')
+async def load_backup_json(interaction: discord.Interaction, backup_json: str, clear_existing: str = "нет"):
     if not is_owner(interaction):
         await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
         return
@@ -1237,6 +1237,9 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
         clear_flag = clear_existing.lower().strip() in ["да", "yes", "true", "1"]
         
         if clear_flag:
+            await interaction.followup.send("🔄 Очистка сервера...", ephemeral=True)
+            
+            # Удаляем все каналы
             for channel in guild.channels:
                 try:
                     await channel.delete()
@@ -1244,6 +1247,7 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
                 except:
                     pass
             
+            # Удаляем все роли (кроме @everyone и ботовых)
             for role in guild.roles:
                 if role.name == "@everyone" or role.managed:
                     continue
@@ -1253,7 +1257,7 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
                 except:
                     pass
         
-        # Восстанавливаем настройки
+        # Восстанавливаем название
         if backup_data.get("name"):
             await guild.edit(name=backup_data["name"])
         
@@ -1273,13 +1277,14 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
             except:
                 pass
         
+        # Восстанавливаем позиции ролей
         for pos in sorted(role_positions.keys(), reverse=True):
             try:
                 await role_positions[pos].edit(position=pos)
             except:
                 pass
         
-        # Восстанавливаем категории и каналы
+        # Восстанавливаем категории
         category_map = {}
         for cat_data in backup_data.get("categories", []):
             try:
@@ -1289,6 +1294,7 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
                 )
                 category_map[cat_data["name"]] = new_category
                 
+                # Восстанавливаем каналы в категории
                 for channel_data in cat_data.get("channels", []):
                     try:
                         if channel_data["type"] == "text":
@@ -1313,6 +1319,7 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
             except:
                 pass
         
+        # Восстанавливаем каналы без категорий
         for channel_data in backup_data.get("channels", []):
             try:
                 if channel_data["type"] == "text":
@@ -1337,7 +1344,7 @@ async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str,
         await interaction.followup.send(f"✅ **Бэкап восстановлен на сервер `{guild.name}`!**", ephemeral=True)
         
     except json.JSONDecodeError:
-        await interaction.followup.send("❌ Неверный формат JSON", ephemeral=True)
+        await interaction.followup.send("❌ Неверный формат JSON. Убедитесь, что вы копируете весь файл.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 

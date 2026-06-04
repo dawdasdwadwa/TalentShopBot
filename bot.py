@@ -37,6 +37,7 @@ TICKET_CHANNEL_ID = 1500242313211805788
 BACKUP_CHANNEL_ID = 1503146387129368718
 BACKUP_MAX_MESSAGES = 50
 LOG_CHANNEL_ID = 1509707240792133824
+AI_DISCUSS_CHANNEL_ID = 1512198408675528854
 ADMIN_PANEL_CHANNEL_ID = 1503168213016641536
 WEBHOOK_SPAM_CHANNEL_ID = 1511587835734659164
 
@@ -203,6 +204,37 @@ _shop_update_lock = asyncio.Lock()
 ai_cooldowns = {}
 
 # ================= ФУНКЦИИ GROQ =================
+
+async def ask_groq_with_model(model: str, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
+    """Запрос к Groq с указанием конкретной модели"""
+    for attempt in range(3):
+        client = get_next_groq_client()
+        if not client:
+            return "❌ Нет доступных Groq клиентов"
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            )
+            text = response.choices[0].message.content
+            try:
+                text = text.encode('latin1').decode('utf-8')
+            except:
+                pass
+            return text
+        except Exception as e:
+            if attempt < 2:
+                await asyncio.sleep(1)
+                continue
+            return f"❌ Ошибка {model}: {str(e)[:200]}"
+    return "❌ Все попытки исчерпаны"
+
 async def ask_groq_with_retry(model: str, messages: List[Dict[str, str]], max_retries: int = 4, temperature: float = 0.2) -> str:
     for attempt in range(max_retries):
         client = get_next_groq_client()
@@ -2294,6 +2326,117 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
     
+    # Обработка вопросов для ИИ дискуссии (приоритет)
+    if message.channel.id == AI_DISCUSS_CHANNEL_ID:
+        async with message.channel.typing():
+            await message.reply("🤖 **Запускаю дискуссию ИИ моделей...**\nОжидайте ответ через несколько секунд.")
+            
+            models = [
+                {
+                    "name": "Llama 3.3 70B",
+                    "id": "llama-3.3-70b-versatile",
+                    "system": "Ты — разработчик с 15-летним стажем. Пиши практичный, рабочий код. Отвечай на русском.",
+                    "color": 0x00FF00
+                },
+                {
+                    "name": "DeepSeek R1",
+                    "id": "deepseek-r1-distill-llama-70b",
+                    "system": "Ты — архитектор ПО. Анализируй проблемы с разных сторон. Отвечай на русском.",
+                    "color": 0x0099FF
+                },
+                {
+                    "name": "Qwen 2.5 32B",
+                    "id": "qwen-2.5-32b",
+                    "system": "Ты — эксперт по оптимизации и лучшим практикам. Предлагай эффективные решения. Отвечай на русском.",
+                    "color": 0xFF6600
+                }
+            ]
+            
+            question = message.content
+            log_channel = bot.get_channel(LOG_CHANNEL_ID)
+            responses = {}
+            
+            if log_channel:
+                log_embed = discord.Embed(
+                    title="🤖 Запрос на дискуссию",
+                    description=f"**Пользователь:** {message.author.mention}\n**Вопрос:** {question}",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                await log_channel.send(embed=log_embed)
+            
+            thinking_msg = await message.channel.send("**💭 Модели анализируют вопрос...**")
+            
+            for i, model in enumerate(models):
+                await thinking_msg.edit(content=f"**💭 {model['name']}** отвечает... ({i+1}/{len(models)})")
+                
+                response = await ask_groq_with_model(
+                    model["id"],
+                    model["system"],
+                    f"Вопрос: {question}\n\nТвой ответ (как {model['name']}):",
+                    0.3
+                )
+                responses[model["name"]] = response
+                
+                embed = discord.Embed(
+                    title=f"🧠 {model['name']}",
+                    description=response[:1500] if len(response) > 1500 else response,
+                    color=model["color"],
+                    timestamp=datetime.now(timezone.utc)
+                )
+                await message.channel.send(embed=embed)
+                await asyncio.sleep(1)
+            
+            await thinking_msg.edit(content="**🔄 Синтез ответов от всех моделей...**")
+            
+            synthesis_prompt = f"""Вопрос: {question}
+
+Проанализируй три ответа от разных ИИ моделей и создай лучший итоговый ответ:
+
+{models[0]['name']}: {responses[models[0]['name']][:800]}
+{models[1]['name']}: {responses[models[1]['name']][:800]}
+{models[2]['name']}: {responses[models[2]['name']][:800]}
+
+Объедини сильные стороны каждого и дай финальный ответ на русском."""
+            
+            final_answer = await ask_groq_with_model(
+                "llama-3.3-70b-versatile",
+                "Ты — главный архитектор, синтезирующий лучшие решения. Отвечай на русском.",
+                synthesis_prompt,
+                0.2
+            )
+            
+            final_embed = discord.Embed(
+                title="✅ ИТОГОВЫЙ ОТВЕТ",
+                description=final_answer[:1500] if len(final_answer) > 1500 else final_answer,
+                color=discord.Color.green(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            final_embed.set_footer(text=f"Запросил: {message.author.display_name}")
+            
+            if len(final_answer) > 1500:
+                await message.channel.send(embed=final_embed)
+                backup_bytes = final_answer[1500:].encode('utf-8')
+                backup_file = discord.File(io.BytesIO(backup_bytes), filename="final_answer.txt")
+                await message.channel.send("📄 Продолжение итогового ответа:", file=backup_file)
+            else:
+                await message.channel.send(embed=final_embed)
+            
+            await thinking_msg.delete()
+            
+            if log_channel:
+                log_embed = discord.Embed(
+                    title="✅ Дискуссия завершена",
+                    description=f"**Вопрос:** {question[:200]}",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                await log_channel.send(embed=log_embed)
+        
+        await bot.process_commands(message)
+        return
+    
+    # Обычная обработка ИИ в CATEGORY_CHANNELS
     category = None
     for cat, cat_channel_id in CATEGORY_CHANNELS.items():
         if cat_channel_id == message.channel.id:

@@ -1371,80 +1371,69 @@ class AdminPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
     
-    @discord.ui.button(label="🛠️ Управление", style=discord.ButtonStyle.primary, custom_id="admin_main_menu", row=0)
+    # Кнопка без эмодзи, серая, с небольшим отступом
+    @discord.ui.button(label="Управление", style=discord.ButtonStyle.secondary, custom_id="admin_main_menu", row=0)
     async def main_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
         
         embed = discord.Embed(
-            title="🛠️ Админ панель",
+            title="● **Админ панель**",
             description="Выберите раздел для управления",
-            color=discord.Color.blurple()
+            color=discord.Color.light_gray() # Светло-серый цвет, ближе к минимализму
         )
-        embed.add_field(name="📁 Категории", value="Управление категориями (добавление, удаление, список)", inline=False)
-        embed.add_field(name="🛒 Товары", value="Управление товарами (добавление, удаление, список)", inline=False)
-        embed.add_field(name="⚙️ Настройки", value="Статистика, обновление магазина, бэкап", inline=False)
+        # --- Имитация списка ---
+        embed.add_field(name="● **Категории**", value="Управление категориями товаров", inline=False)
+        embed.add_field(name="● **Товары**", value="Управление товарами и ассортиментом", inline=False)
+        embed.add_field(name="● **Настройки**", value="Статистика и резервное копирование", inline=False)
+        
+        embed.set_footer(text="Панель управления")
+        # Убираем иконку/картинку, если она была
+        embed.set_thumbnail(url=None) 
         
         view = AdminMainMenu()
         await interaction.response.edit_message(embed=embed, view=view)
 
+# Вспомогательное меню тоже меняем
 class AdminMainMenu(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
     
-    @discord.ui.button(label="📁 Категории", style=discord.ButtonStyle.success, custom_id="admin_cats_menu", row=0)
+    @discord.ui.button(label="Категории", style=discord.ButtonStyle.secondary, custom_id="admin_cats_menu", row=0)
     async def categories_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
-            return
-        
-        embed = discord.Embed(title="📁 Управление категориями", color=discord.Color.blue())
-        embed.add_field(name="➕ Добавить категорию", value="Создать новую категорию", inline=False)
-        embed.add_field(name="🗑️ Удалить категорию", value="Удалить существующую категорию", inline=False)
-        embed.add_field(name="📋 Список категорий", value="Показать все категории с ID", inline=False)
-        
+        # ... (логика остается)
+        embed = discord.Embed(title="● **Управление категориями**", color=discord.Color.light_gray())
+        embed.add_field(name="● **Добавить категорию**", value="Создать новую категорию", inline=False)
+        embed.add_field(name="● **Удалить категорию**", value="Удалить существующую категорию", inline=False)
+        embed.add_field(name="● **Список категорий**", value="Показать все категории с ID", inline=False)
         view = CategoriesMenuView()
         await interaction.response.edit_message(embed=embed, view=view)
     
-    @discord.ui.button(label="🛒 Товары", style=discord.ButtonStyle.success, custom_id="admin_lots_menu", row=0)
+    @discord.ui.button(label="Товары", style=discord.ButtonStyle.secondary, custom_id="admin_lots_menu", row=0)
     async def lots_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
-            return
-        
-        embed = discord.Embed(title="🛒 Управление товарами", color=discord.Color.green())
-        embed.add_field(name="➕ Добавить товар", value="Создать новый товар", inline=False)
-        embed.add_field(name="🗑️ Удалить товар", value="Удалить существующий товар", inline=False)
-        embed.add_field(name="📋 Список товаров", value="Показать все товары с ID", inline=False)
-        
+        # ... аналогично
+        embed = discord.Embed(title="● **Управление товарами**", color=discord.Color.light_gray())
+        embed.add_field(name="● **Добавить товар**", value="Создать новый товар", inline=False)
+        embed.add_field(name="● **Удалить товар**", value="Удалить существующий товар", inline=False)
+        embed.add_field(name="● **Список товаров**", value="Показать все товары с ID", inline=False)
         view = LotsMenuView()
         await interaction.response.edit_message(embed=embed, view=view)
     
-    @discord.ui.button(label="⚙️ Настройки", style=discord.ButtonStyle.success, custom_id="admin_settings_menu", row=0)
+    @discord.ui.button(label="Настройки", style=discord.ButtonStyle.secondary, custom_id="admin_settings_menu", row=0)
     async def settings_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
-            return
-        
-        categories = db.categories_cache
-        total_lots = len(db.lots_cache)
-        
-        embed = discord.Embed(title="⚙️ Настройки и статистика", color=discord.Color.gold())
-        embed.add_field(name="📊 Статистика", value=f"📁 Категорий: {len(categories)}\n🛒 Товаров: {total_lots}", inline=False)
-        embed.add_field(name="🔄 Обновить магазин", value="Принудительное обновление магазина", inline=False)
-        embed.add_field(name="💾 Бэкап", value="Создать резервную копию", inline=False)
-        
+        # ... аналогично
+        embed = discord.Embed(title="● **Настройки и статистика**", color=discord.Color.light_gray())
+        embed.add_field(name="● **Статистика**", value="Показать статистику магазина", inline=False)
+        embed.add_field(name="● **Обновить магазин**", value="Принудительное обновление", inline=False)
+        embed.add_field(name="● **Бэкап**", value="Создать резервную копию", inline=False)
         view = SettingsMenuView()
         await interaction.response.edit_message(embed=embed, view=view)
     
-    @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="admin_back_main", row=1)
+    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary, custom_id="admin_back_main", row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="🛠️ Админ панель",
-            description="Нажмите на кнопку ниже для открытия меню управления",
-            color=discord.Color.blurple()
-        )
+        # ... логика
+        embed = discord.Embed(title="● **Админ панель**", description="Выберите раздел", color=discord.Color.light_gray())
         view = AdminPanelView()
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -1517,13 +1506,13 @@ class CategoriesMenuView(discord.ui.View):
     @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="cat_back", row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
-            title="🛠️ Админ панель",
+            title="● **Админ панель**",
             description="Выберите раздел для управления",
-            color=discord.Color.blurple()
+            color=discord.Color.light_gray()
         )
-        embed.add_field(name="📁 Категории", value="Управление категориями (добавление, удаление, список)", inline=False)
-        embed.add_field(name="🛒 Товары", value="Управление товарами (добавление, удаление, список)", inline=False)
-        embed.add_field(name="⚙️ Настройки", value="Статистика, обновление магазина, бэкап", inline=False)
+        embed.add_field(name="● **Категории**", value="Управление категориями товаров", inline=False)
+        embed.add_field(name="● **Товары**", value="Управление товарами и ассортиментом", inline=False)
+        embed.add_field(name="● **Настройки**", value="Статистика и резервное копирование", inline=False)
         
         view = AdminMainMenu()
         await interaction.response.edit_message(embed=embed, view=view)

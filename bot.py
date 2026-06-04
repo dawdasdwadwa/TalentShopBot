@@ -2156,8 +2156,6 @@ async def setup_webhook_spam_panel():
     await channel.send(embed=embed, view=WebhookSpamPanel())
 
 # ================= ПАНЕЛЬ КОПИРОВАНИЯ СЕРВЕРА =================
-
-# ================= ПАНЕЛЬ КОПИРОВАНИЯ СЕРВЕРА =================
 class CopyServerPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -2201,6 +2199,119 @@ class CopyServerPanel(discord.ui.View):
             return
         modal = CopySettingsModal()
         await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="💾 Сохранить бэкап", style=discord.ButtonStyle.success, custom_id="backup_save", row=2)
+    async def backup_save_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        await self.save_backup(interaction)
+    
+    @discord.ui.button(label="📂 Загрузить бэкап", style=discord.ButtonStyle.primary, custom_id="backup_load", row=2)
+    async def backup_load_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = LoadBackupModal()
+        await interaction.response.send_modal(modal)
+    
+    async def save_backup(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            guild = interaction.guild
+            backup_data = {
+                "name": guild.name,
+                "icon_url": str(guild.icon.url) if guild.icon else None,
+                "banner_url": str(guild.banner.url) if guild.banner else None,
+                "verification_level": guild.verification_level.value,
+                "explicit_content_filter": guild.explicit_content_filter.value,
+                "preferred_locale": str(guild.preferred_locale),
+                "roles": [],
+                "categories": [],
+                "channels": []
+            }
+            
+            # Сохраняем роли (кроме @everyone)
+            for role in guild.roles:
+                if role.name == "@everyone":
+                    continue
+                backup_data["roles"].append({
+                    "name": role.name,
+                    "color": role.color.value,
+                    "permissions": role.permissions.value,
+                    "hoist": role.hoist,
+                    "mentionable": role.mentionable,
+                    "position": role.position
+                })
+            
+            # Сохраняем категории и каналы
+            for category in guild.categories:
+                cat_data = {
+                    "name": category.name,
+                    "position": category.position,
+                    "channels": []
+                }
+                for channel in category.channels:
+                    if isinstance(channel, discord.TextChannel):
+                        cat_data["channels"].append({
+                            "type": "text",
+                            "name": channel.name,
+                            "position": channel.position,
+                            "topic": channel.topic,
+                            "slowmode_delay": channel.slowmode_delay,
+                            "nsfw": channel.nsfw
+                        })
+                    elif isinstance(channel, discord.VoiceChannel):
+                        cat_data["channels"].append({
+                            "type": "voice",
+                            "name": channel.name,
+                            "position": channel.position,
+                            "bitrate": channel.bitrate,
+                            "user_limit": channel.user_limit
+                        })
+                backup_data["categories"].append(cat_data)
+            
+            # Сохраняем каналы без категорий
+            for channel in guild.channels:
+                if channel.category_id is None and not isinstance(channel, discord.CategoryChannel):
+                    if isinstance(channel, discord.TextChannel):
+                        backup_data["channels"].append({
+                            "type": "text",
+                            "name": channel.name,
+                            "position": channel.position,
+                            "topic": channel.topic,
+                            "slowmode_delay": channel.slowmode_delay,
+                            "nsfw": channel.nsfw
+                        })
+                    elif isinstance(channel, discord.VoiceChannel):
+                        backup_data["channels"].append({
+                            "type": "voice",
+                            "name": channel.name,
+                            "position": channel.position,
+                            "bitrate": channel.bitrate,
+                            "user_limit": channel.user_limit
+                        })
+            
+            # Сохраняем в JSON файл
+            backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2)
+            backup_bytes = backup_json.encode('utf-8')
+            backup_file = discord.File(
+                io.BytesIO(backup_bytes),
+                filename=f"server_backup_{guild.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            
+            await interaction.followup.send(
+                f"✅ **Бэкап сервера `{guild.name}` создан!**\n"
+                f"📁 Ролей: {len(backup_data['roles'])}\n"
+                f"📂 Категорий: {len(backup_data['categories'])}\n"
+                f"💬 Каналов: {len(backup_data['channels'])}",
+                file=backup_file,
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 
 class CopyServerModal(discord.ui.Modal, title="Копирование сервера"):
@@ -2575,7 +2686,14 @@ class CopySettingsModal(discord.ui.Modal, title="Копирование наст
             except:
                 settings["locale"] = "❌"
             
-            # 7. Копируем список банов
+            # 7. Копируем баннер приглашений
+            try:
+                await current_guild.edit(splash=target_guild.splash)
+                settings["splash"] = "✅"
+            except:
+                settings["splash"] = "❌"
+            
+            # 8. Копируем список банов
             if copy_bans_flag:
                 banned_users = []
                 async for entry in target_guild.bans():
@@ -2601,10 +2719,156 @@ class CopySettingsModal(discord.ui.Modal, title="Копирование наст
             report += f"🔒 Верификация: {settings['verification']}\n"
             report += f"📋 Модерация: {settings['content_filter']}\n"
             report += f"🌐 Язык: {settings['locale']}\n"
+            report += f"✨ Сплаш: {settings['splash']}\n"
             report += f"🚫 Баны: {settings['bans']}"
             
             await interaction.followup.send(report, ephemeral=True)
             
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+class LoadBackupModal(discord.ui.Modal, title="Загрузка бэкапа"):
+    backup_json = discord.ui.TextInput(
+        label="JSON бэкапа",
+        placeholder="Вставьте JSON содержимое бэкапа сюда...",
+        required=True,
+        style=discord.TextStyle.paragraph,
+        max_length=10000
+    )
+    clear_existing = discord.ui.TextInput(
+        label="Очистить текущий сервер?",
+        placeholder="да/нет",
+        required=False,
+        default="нет"
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            backup_data = json.loads(self.backup_json.value)
+            guild = interaction.guild
+            clear_flag = self.clear_existing.value.lower().strip() in ["да", "yes", "true", "1"]
+            
+            if clear_flag:
+                await interaction.followup.send("🔄 Очистка сервера...", ephemeral=True)
+                
+                # Удаляем все каналы и категории
+                for channel in guild.channels:
+                    try:
+                        await channel.delete()
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+                
+                # Удаляем все роли (кроме @everyone и ботовых)
+                for role in guild.roles:
+                    if role.name == "@everyone" or role.managed:
+                        continue
+                    try:
+                        await role.delete()
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+            
+            # Восстанавливаем настройки сервера
+            try:
+                if backup_data.get("name"):
+                    await guild.edit(name=backup_data["name"])
+            except:
+                pass
+            
+            # Восстанавливаем роли
+            role_positions = {}
+            for role_data in backup_data.get("roles", []):
+                try:
+                    new_role = await guild.create_role(
+                        name=role_data["name"],
+                        color=role_data["color"],
+                        permissions=discord.Permissions(role_data["permissions"]),
+                        hoist=role_data["hoist"],
+                        mentionable=role_data["mentionable"]
+                    )
+                    role_positions[role_data["position"]] = new_role
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            # Восстанавливаем позиции ролей
+            for pos in sorted(role_positions.keys(), reverse=True):
+                try:
+                    await role_positions[pos].edit(position=pos)
+                except:
+                    pass
+            
+            # Восстанавливаем категории
+            category_map = {}
+            for cat_data in backup_data.get("categories", []):
+                try:
+                    new_category = await guild.create_category(
+                        name=cat_data["name"],
+                        position=cat_data["position"]
+                    )
+                    category_map[cat_data["name"]] = new_category
+                    
+                    # Восстанавливаем каналы в категории
+                    for channel_data in cat_data.get("channels", []):
+                        try:
+                            if channel_data["type"] == "text":
+                                await new_category.create_text_channel(
+                                    name=channel_data["name"],
+                                    position=channel_data["position"],
+                                    topic=channel_data.get("topic"),
+                                    slowmode_delay=channel_data.get("slowmode_delay", 0),
+                                    nsfw=channel_data.get("nsfw", False)
+                                )
+                            elif channel_data["type"] == "voice":
+                                await new_category.create_voice_channel(
+                                    name=channel_data["name"],
+                                    position=channel_data["position"],
+                                    bitrate=min(channel_data.get("bitrate", 64000), 96000),
+                                    user_limit=channel_data.get("user_limit", 0)
+                                )
+                            await asyncio.sleep(0.3)
+                        except:
+                            pass
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            # Восстанавливаем каналы без категорий
+            for channel_data in backup_data.get("channels", []):
+                try:
+                    if channel_data["type"] == "text":
+                        await guild.create_text_channel(
+                            name=channel_data["name"],
+                            position=channel_data["position"],
+                            topic=channel_data.get("topic"),
+                            slowmode_delay=channel_data.get("slowmode_delay", 0),
+                            nsfw=channel_data.get("nsfw", False)
+                        )
+                    elif channel_data["type"] == "voice":
+                        await guild.create_voice_channel(
+                            name=channel_data["name"],
+                            position=channel_data["position"],
+                            bitrate=min(channel_data.get("bitrate", 64000), 96000),
+                            user_limit=channel_data.get("user_limit", 0)
+                        )
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            await interaction.followup.send(
+                f"✅ **Бэкап восстановлен на сервер `{guild.name}`!**\n"
+                f"📁 Восстановлено ролей: {len(role_positions)}\n"
+                f"📂 Восстановлено категорий: {len(backup_data.get('categories', []))}\n"
+                f"💬 Восстановлено каналов: {len(backup_data.get('categories', [])) + len(backup_data.get('channels', []))}",
+                ephemeral=True
+            )
+            
+        except json.JSONDecodeError:
+            await interaction.followup.send("❌ Неверный формат JSON бэкапа", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
@@ -2632,14 +2896,16 @@ async def setup_copy_panel():
                     "🔄 **Копировать роли** - только роли\n"
                     "📁 **Копировать каналы** - только категории и каналы\n"
                     "🔗 **Копировать вебхуки** - перенос вебхуков\n"
-                    "⚙️ **Копировать настройки** - название, иконка, уровень верификации, баны\n\n"
+                    "⚙️ **Копировать настройки** - название, иконка, уровень верификации, баны\n"
+                    "💾 **Сохранить бэкап** - создать JSON бэкап текущего сервера\n"
+                    "📂 **Загрузить бэкап** - восстановить сервер из JSON бэкапа\n\n"
                     "⚠️ Требуются права администратора",
         color=discord.Color.blue()
     )
     view = CopyServerPanel()
     await channel.send(embed=embed, view=view)
     logger.info("✅ Панель копирования сервера отправлена")
-
+    
 # ================= ЗАПУСК =================
 async def _safe_task(coro, name: str):
     try:

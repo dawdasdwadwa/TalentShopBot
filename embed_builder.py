@@ -1,41 +1,42 @@
 """
 embed_builder.py — Интерактивный конструктор эмбедов для Discord-бота.
-
+ 
 Воспроизводит функциональность Discohook Utils и Embed Generator:
   • Произвольный заголовок, описание, цвет, иконка/изображение
   • Поля (fields) с inline-поддержкой
   • Кнопки-ссылки (Link Buttons) как в Discohook
   • Готовые шаблоны: «Информация», «Роли», «FAQ» и т.д.
   • Отправка в любой канал сервера
-
+ 
 Подключение в bot.py:
     from embed_builder import setup_embed_builder
     ...
     async def on_ready():
-        setup_embed_builder(bot)
+        # Передаём is_owner из bot.py — команда только для Owner
+        setup_embed_builder(bot, owner_check=is_owner)
         ...
 """
-
+ 
 from __future__ import annotations
-
+ 
 import discord
 from discord import app_commands
 from discord.ui import Modal, TextInput, View, Button, Select
 from typing import Optional, List
 import re
-
+ 
 # ──────────────────────────────────────────────
 #  Вспомогательные функции
 # ──────────────────────────────────────────────
-
+ 
 def _hex_to_color(hex_str: str) -> Optional[discord.Color]:
     """Парсит строку #RRGGBB или RRGGBB в discord.Color."""
     hex_str = hex_str.strip().lstrip("#")
     if re.fullmatch(r"[0-9a-fA-F]{6}", hex_str):
         return discord.Color(int(hex_str, 16))
     return None
-
-
+ 
+ 
 def _parse_fields(raw: str) -> List[dict]:
     """
     Формат одного поля в строке:
@@ -57,8 +58,8 @@ def _parse_fields(raw: str) -> List[dict]:
         if name and value:
             fields.append({"name": name, "value": value, "inline": inline})
     return fields
-
-
+ 
+ 
 def _parse_buttons(raw: str) -> List[dict]:
     """
     Формат: Метка | URL | Эмодзи(необяз.)
@@ -77,12 +78,12 @@ def _parse_buttons(raw: str) -> List[dict]:
             if label and url.startswith("http"):
                 buttons.append({"label": label, "url": url, "emoji": emoji})
     return buttons
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 #  Шаблоны эмбедов
 # ──────────────────────────────────────────────
-
+ 
 TEMPLATES = {
     "info": {
         "label": "📌 Информация",
@@ -156,22 +157,22 @@ TEMPLATES = {
         "footer": "",
     },
 }
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 #  Состояние (per-user сессия)
 # ──────────────────────────────────────────────
-
+ 
 class EmbedSession:
     """Хранит черновик эмбеда для одного пользователя."""
-
+ 
     __slots__ = (
         "title", "description", "color", "fields_raw",
         "buttons_raw", "thumbnail", "image",
         "author_name", "author_icon", "footer",
         "target_channel_id",
     )
-
+ 
     def __init__(self, template: dict | None = None):
         tpl = template or TEMPLATES["blank"]
         self.title: str = tpl["title"]
@@ -185,7 +186,7 @@ class EmbedSession:
         self.author_icon: str = tpl["author_icon"]
         self.footer: str = tpl["footer"]
         self.target_channel_id: int | None = None
-
+ 
     def build_embed(self) -> discord.Embed:
         color = _hex_to_color(self.color) or discord.Color(0x2b2d31)
         embed = discord.Embed(
@@ -211,7 +212,7 @@ class EmbedSession:
         if self.footer:
             embed.set_footer(text=self.footer)
         return embed
-
+ 
     def build_view(self) -> View | None:
         buttons = _parse_buttons(self.buttons_raw)
         if not buttons:
@@ -226,22 +227,22 @@ class EmbedSession:
             )
             view.add_item(b)
         return view
-
-
+ 
+ 
 # Глобальное хранилище сессий: user_id -> EmbedSession
 _sessions: dict[int, EmbedSession] = {}
-
-
+ 
+ 
 def get_session(user_id: int) -> EmbedSession:
     if user_id not in _sessions:
         _sessions[user_id] = EmbedSession()
     return _sessions[user_id]
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 #  Модальные окна
 # ──────────────────────────────────────────────
-
+ 
 class EmbedBaseModal(Modal, title="✏️ Основные поля эмбеда"):
     title_input = TextInput(
         label="Заголовок (title)", placeholder="• Информация о сервере",
@@ -260,7 +261,7 @@ class EmbedBaseModal(Modal, title="✏️ Основные поля эмбеда
         label="Footer (текст внизу)", placeholder="TALENT SHOP • 2025",
         required=False, max_length=2048,
     )
-
+ 
     def __init__(self, session: EmbedSession):
         super().__init__()
         self.session = session
@@ -268,7 +269,7 @@ class EmbedBaseModal(Modal, title="✏️ Основные поля эмбеда
         self.desc_input.default = session.description
         self.color_input.default = session.color
         self.footer_input.default = session.footer
-
+ 
     async def on_submit(self, interaction: discord.Interaction):
         s = self.session
         s.title = self.title_input.value
@@ -278,8 +279,8 @@ class EmbedBaseModal(Modal, title="✏️ Основные поля эмбеда
         await interaction.response.send_message(
             "✅ Основные поля обновлены.", ephemeral=True
         )
-
-
+ 
+ 
 class EmbedAuthorImageModal(Modal, title="🖼️ Автор и изображения"):
     author_name = TextInput(
         label="Имя автора (author name)", placeholder="Информация о ролях",
@@ -297,7 +298,7 @@ class EmbedAuthorImageModal(Modal, title="🖼️ Автор и изображе
         label="Большое изображение (image URL)", placeholder="https://i.imgur.com/...",
         required=False, max_length=500,
     )
-
+ 
     def __init__(self, session: EmbedSession):
         super().__init__()
         self.session = session
@@ -305,7 +306,7 @@ class EmbedAuthorImageModal(Modal, title="🖼️ Автор и изображе
         self.author_icon.default = session.author_icon
         self.thumbnail.default = session.thumbnail
         self.image.default = session.image
-
+ 
     async def on_submit(self, interaction: discord.Interaction):
         s = self.session
         s.author_name = self.author_name.value
@@ -315,8 +316,8 @@ class EmbedAuthorImageModal(Modal, title="🖼️ Автор и изображе
         await interaction.response.send_message(
             "✅ Автор и изображения обновлены.", ephemeral=True
         )
-
-
+ 
+ 
 class EmbedFieldsModal(Modal, title="📋 Поля (Fields)"):
     fields_input = TextInput(
         label="Поля",
@@ -328,19 +329,19 @@ class EmbedFieldsModal(Modal, title="📋 Поля (Fields)"):
         style=discord.TextStyle.paragraph,
         required=False, max_length=4000,
     )
-
+ 
     def __init__(self, session: EmbedSession):
         super().__init__()
         self.session = session
         self.fields_input.default = session.fields_raw
-
+ 
     async def on_submit(self, interaction: discord.Interaction):
         self.session.fields_raw = self.fields_input.value
         await interaction.response.send_message(
             "✅ Поля обновлены.", ephemeral=True
         )
-
-
+ 
+ 
 class EmbedButtonsModal(Modal, title="🔗 Кнопки-ссылки (как Discohook)"):
     buttons_input = TextInput(
         label="Кнопки (каждая на новой строке)",
@@ -352,32 +353,32 @@ class EmbedButtonsModal(Modal, title="🔗 Кнопки-ссылки (как Dis
         style=discord.TextStyle.paragraph,
         required=False, max_length=1000,
     )
-
+ 
     def __init__(self, session: EmbedSession):
         super().__init__()
         self.session = session
         self.buttons_input.default = session.buttons_raw
-
+ 
     async def on_submit(self, interaction: discord.Interaction):
         self.session.buttons_raw = self.buttons_input.value
         await interaction.response.send_message(
             "✅ Кнопки-ссылки обновлены.", ephemeral=True
         )
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 #  Главная View конструктора
 # ──────────────────────────────────────────────
-
+ 
 class EmbedBuilderView(View):
     """Панель управления конструктором эмбеда."""
-
+ 
     def __init__(self, session: EmbedSession, guild: discord.Guild, editor_id: int):
         super().__init__(timeout=600)
         self.session = session
         self.guild = guild
         self.editor_id = editor_id
-
+ 
         # Выбор канала назначения
         channels = [
             ch for ch in guild.text_channels
@@ -395,46 +396,46 @@ class EmbedBuilderView(View):
             )
             ch_select.callback = self._channel_select_callback
             self.add_item(ch_select)
-
+ 
     async def _channel_select_callback(self, interaction: discord.Interaction):
         self.session.target_channel_id = int(interaction.data["values"][0])
         await interaction.response.send_message(
             f"✅ Канал назначения установлен: <#{self.session.target_channel_id}>",
             ephemeral=True,
         )
-
+ 
     async def _check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.editor_id:
             await interaction.response.send_message("❌ Это не ваша панель.", ephemeral=True)
             return False
         return True
-
+ 
     # ── Кнопки ──
-
+ 
     @discord.ui.button(label="✏️ Основные поля", style=discord.ButtonStyle.blurple, row=1)
     async def btn_base(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
             return
         await interaction.response.send_modal(EmbedBaseModal(self.session))
-
+ 
     @discord.ui.button(label="🖼️ Автор / Изображения", style=discord.ButtonStyle.blurple, row=1)
     async def btn_images(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
             return
         await interaction.response.send_modal(EmbedAuthorImageModal(self.session))
-
+ 
     @discord.ui.button(label="📋 Поля (Fields)", style=discord.ButtonStyle.blurple, row=1)
     async def btn_fields(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
             return
         await interaction.response.send_modal(EmbedFieldsModal(self.session))
-
+ 
     @discord.ui.button(label="🔗 Кнопки-ссылки", style=discord.ButtonStyle.blurple, row=1)
     async def btn_buttons(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
             return
         await interaction.response.send_modal(EmbedButtonsModal(self.session))
-
+ 
     @discord.ui.button(label="👁️ Предпросмотр", style=discord.ButtonStyle.secondary, row=2)
     async def btn_preview(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
@@ -445,7 +446,7 @@ class EmbedBuilderView(View):
         if view:
             kwargs["view"] = view
         await interaction.response.send_message(**kwargs)
-
+ 
     @discord.ui.button(label="📤 Отправить", style=discord.ButtonStyle.green, row=2)
     async def btn_send(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
@@ -469,7 +470,7 @@ class EmbedBuilderView(View):
         await interaction.response.send_message(
             f"✅ Эмбед отправлен в {channel.mention}!", ephemeral=True
         )
-
+ 
     @discord.ui.button(label="🗑️ Сбросить", style=discord.ButtonStyle.danger, row=2)
     async def btn_reset(self, interaction: discord.Interaction, button: Button):
         if not await self._check(interaction):
@@ -477,18 +478,18 @@ class EmbedBuilderView(View):
         _sessions[interaction.user.id] = EmbedSession()
         self.session = _sessions[interaction.user.id]
         await interaction.response.send_message("🗑️ Черновик сброшен.", ephemeral=True)
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 #  View выбора шаблона
 # ──────────────────────────────────────────────
-
+ 
 class TemplateSelectView(View):
     def __init__(self, user_id: int, guild: discord.Guild):
         super().__init__(timeout=60)
         self.user_id = user_id
         self.guild = guild
-
+ 
         options = [
             discord.SelectOption(
                 label=tpl["label"],
@@ -500,7 +501,7 @@ class TemplateSelectView(View):
         select = Select(placeholder="Выбери шаблон…", options=options)
         select.callback = self._on_select
         self.add_item(select)
-
+ 
     async def _on_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Это не ваша панель.", ephemeral=True)
@@ -528,27 +529,42 @@ class TemplateSelectView(View):
             color=discord.Color.gold(),
         )
         await interaction.response.send_message(embed=embed, view=builder_view, ephemeral=True)
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 #  Регистрация команды
 # ──────────────────────────────────────────────
-
-def setup_embed_builder(bot: commands.Bot):  # type: ignore[name-defined]
-    """Вызвать в on_ready или сразу после создания bot."""
-
+ 
+def setup_embed_builder(bot: commands.Bot, owner_check=None):  # type: ignore[name-defined]
+    """
+    Вызвать в on_ready или сразу после создания bot.
+ 
+    owner_check — необязательная функция (interaction) -> bool.
+    Если передана — используется она (например is_owner из bot.py).
+    Если не передана — проверяется роль с названием 'Owner' или
+    стандартное право administrator.
+    """
+ 
+    def _is_owner(interaction: discord.Interaction) -> bool:
+        if owner_check is not None:
+            return owner_check(interaction)
+        # Фоллбэк: роль Owner или administrator
+        for role in interaction.user.roles:
+            if role.name.lower() == "owner":
+                return True
+        return interaction.user.guild_permissions.administrator
+ 
     @bot.tree.command(
         name="embed_builder",
-        description="[ADMIN] Конструктор эмбедов (Discohook / EmbedGenerator стиль)",
+        description="[OWNER] Конструктор эмбедов (Discohook / EmbedGenerator стиль)",
     )
     async def embed_builder_cmd(interaction: discord.Interaction):
-        # Проверка прав — минимум manage_messages
-        if not interaction.user.guild_permissions.manage_messages:
+        if not _is_owner(interaction):
             await interaction.response.send_message(
-                "❌ Нужно право **Manage Messages**.", ephemeral=True
+                "❌ Эта команда доступна только **Owner**.", ephemeral=True
             )
             return
-
+ 
         view = TemplateSelectView(interaction.user.id, interaction.guild)
         await interaction.response.send_message(
             "📐 **Конструктор эмбедов** — выберите шаблон для старта:",

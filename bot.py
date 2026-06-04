@@ -1930,21 +1930,46 @@ class WebhookSpamPanel(discord.ui.View):
         await interaction.response.send_message("🛑 Остановка спама...", ephemeral=True)
 
 
-class ChangeNameModal(discord.ui.Modal, title="Смена имени"):
-    webhook_url = discord.ui.TextInput(label="URL вебхука", placeholder="https://discord.com/api/webhooks/...", required=True)
-    new_name = discord.ui.TextInput(label="Новое имя", placeholder="Имя вебхука", required=True)
+class ChangeNameModal(discord.ui.Modal, title="Смена имени вебхуков"):
+    webhooks = discord.ui.TextInput(
+        label="Вебхуки (каждый с новой строки)",
+        placeholder="https://discord.com/api/webhooks/...\nhttps://discord.com/api/webhooks/...",
+        required=True,
+        style=discord.TextStyle.paragraph
+    )
+    new_name = discord.ui.TextInput(
+        label="Новое имя",
+        placeholder="Имя для всех вебхуков",
+        required=True,
+        max_length=80
+    )
     
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.patch(self.webhook_url.value, json={"name": self.new_name.value}) as resp:
-                    if resp.status in [200, 204]:
-                        await interaction.followup.send(f"✅ Имя изменено на **{self.new_name.value}**", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"❌ Ошибка: {resp.status}", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ {e}", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        webhook_list = [url.strip() for url in self.webhooks.value.split('\n') if url.strip()]
+        if not webhook_list:
+            await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
+            return
+        
+        success = 0
+        failed = 0
+        
+        async with aiohttp.ClientSession() as session:
+            for webhook_url in webhook_list:
+                try:
+                    async with session.patch(webhook_url, json={"name": self.new_name.value}) as resp:
+                        if resp.status in [200, 204]:
+                            success += 1
+                        else:
+                            failed += 1
+                except Exception:
+                    failed += 1
+        
+        await interaction.followup.send(
+            f"✅ **Смена имени завершена!**\n🔄 Успешно: {success}\n❌ Ошибок: {failed}",
+            ephemeral=True
+        )
 
 
 class ClearWebhookModal(discord.ui.Modal, title="Очистка вебхука"):

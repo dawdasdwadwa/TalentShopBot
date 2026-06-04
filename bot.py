@@ -1223,7 +1223,7 @@ async def list_lots(interaction: discord.Interaction):
     await send_or_update_shop(interaction.guild)
     await interaction.followup.send("✅ Магазин обновлён", ephemeral=True)
 
-@bot.tree.command(name='restore_backup', description='[OWNER] Восстановить сервер из JSON бэкапа')
+@bot.tree.command(name='restore_server_backup', description='[OWNER] Восстановить сервер из JSON бэкапа')
 async def restore_backup_cmd(interaction: discord.Interaction, backup_json: str, clear_existing: str = "нет"):
     if not is_owner(interaction):
         await interaction.response.send_message("❌ Только для Owner", ephemeral=True)

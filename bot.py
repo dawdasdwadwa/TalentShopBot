@@ -29,6 +29,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ================= КОНСТАНТЫ =================
+INFO_PANEL_CHANNEL_ID = 1500242308195418153
 AI_CONVEYOR_CHANNEL_ID = 1509333979713769612
 TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531
 TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
@@ -2142,6 +2143,79 @@ async def setup_webhook_spam_panel():
             await msg.delete()
     embed = discord.Embed(title="💣 ВЕБХУК ПАНЕЛЬ", description="📨 Discohook | ⚡ Быстрый | 🎭 Сменить имя | 🗑️ Очистка | 🛑 Стоп\n\n⚠️ Задержка 1 секунда для защиты от бана", color=discord.Color.red())
     await channel.send(embed=embed, view=WebhookSpamPanel())
+
+# ================= ПРАВИЛА ПАНЕЛЬ =================
+
+class InfoPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="Роли", style=discord.ButtonStyle.secondary, custom_id="info_roles", row=0)
+    async def roles_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="● **Роли сервера**",
+            description="Здесь собраны все роли и их назначение",
+            color=discord.Color.light_gray()
+        )
+        embed.add_field(name="● **Владелец**", value="Полный доступ к серверу", inline=False)
+        embed.add_field(name="● **Администратор**", value="Управление сервером", inline=False)
+        embed.add_field(name="● **Модератор**", value="Следит за порядком", inline=False)
+        embed.add_field(name="● **Участник**", value="Основная роль", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="Награды", style=discord.ButtonStyle.secondary, custom_id="info_rewards", row=0)
+    async def rewards_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="● **Награды**",
+            description="Здесь собрана вся информация о наградах",
+            color=discord.Color.light_gray()
+        )
+        embed.add_field(name="● **За активность**", value="Роль за 1000 сообщений", inline=False)
+        embed.add_field(name="● **За приглашения**", value="Роль за 5 приглашений", inline=False)
+        embed.add_field(name="● **За буст**", value="Особая роль и привилегии", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="FAQ", style=discord.ButtonStyle.secondary, custom_id="info_faq", row=0)
+    async def faq_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="● **Часто задаваемые вопросы**",
+            description="Ответы на популярные вопросы",
+            color=discord.Color.light_gray()
+        )
+        embed.add_field(name="● **Как верифицироваться?**", value="Нажмите кнопку в канале #верификация", inline=False)
+        embed.add_field(name="● **Как получить роль?**", value="Выполните условия в канале #награды", inline=False)
+        embed.add_field(name="● **Как создать тикет?**", value="Используйте кнопку в канале #поддержка", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def setup_info_panel():
+    channel = bot.get_channel(INFO_PANEL_CHANNEL_ID)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(INFO_PANEL_CHANNEL_ID)
+        except Exception as e:
+            logger.error(f"Информационный канал {INFO_PANEL_CHANNEL_ID} не найден: {e}")
+            return
+    
+    try:
+        async for msg in channel.history(limit=50):
+            if msg.author == bot.user:
+                await msg.delete()
+    except Exception:
+        pass
+    
+    embed = discord.Embed(
+        title="● **Информация**",
+        description="Здесь собрана вся важная информация о сервере: награды, роли, часто задаваемые вопросы",
+        color=discord.Color.light_gray()
+    )
+    embed.add_field(name="● **Роли**", value="Тут собраны все роли сервера", inline=False)
+    embed.add_field(name="● **Награды**", value="Тут можно найти всё о наградах", inline=False)
+    embed.add_field(name="● **FAQ**", value="Здесь собраны часто задаваемые вопросы", inline=False)
+    
+    view = InfoPanelView()
+    await channel.send(embed=embed, view=view)
+    logger.info("✅ Информационная панель отправлена")
 
 # ================= ЗАПУСК =================
 async def _safe_task(coro, name: str):

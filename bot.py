@@ -1883,10 +1883,6 @@ async def setup_ai_panel():
 
 # ================= ВЕБХУК СПАМ ПАНЕЛЬ =================
 
-# ================= ВЕБХУК СПАМ ПАНЕЛЬ =================
-WEBHOOK_SPAM_CHANNEL_ID = 1511587835734659164
-import random
-
 class WebhookSpamPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -1896,7 +1892,7 @@ class WebhookSpamPanel(discord.ui.View):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
-        modal = DiscohookModal()
+        modal = DiscohookModalPage1()
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="⚡ Быстрый спам", style=discord.ButtonStyle.primary, custom_id="spam_quick", row=0)
@@ -1951,7 +1947,7 @@ class ChangeNameModal(discord.ui.Modal, title="Смена имени вебху�
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 
-class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
+class DiscohookModalPage1(discord.ui.Modal, title="Discohook режим (стр.1/2)"):
     webhooks = discord.ui.TextInput(
         label="Вебхуки (каждый с новой строки)",
         placeholder="https://discord.com/api/webhooks/123/abc\nhttps://discord.com/api/webhooks/456/def",
@@ -1984,6 +1980,19 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
         placeholder="https://example.com/image.png",
         required=False
     )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        modal = DiscohookModalPage2(
+            self.webhooks.value,
+            self.messages_list.value,
+            self.embed_title.value,
+            self.embed_desc.value,
+            self.image_url.value
+        )
+        await interaction.response.send_modal(modal)
+
+
+class DiscohookModalPage2(discord.ui.Modal, title="Discohook режим (стр.2/2)"):
     mention_id = discord.ui.TextInput(
         label="ID для упоминания",
         placeholder="123456789012345678",
@@ -2008,15 +2017,23 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
         default="0.5"
     )
     
+    def __init__(self, webhooks, messages_list, embed_title, embed_desc, image_url):
+        super().__init__()
+        self.webhooks_val = webhooks
+        self.messages_list_val = messages_list
+        self.embed_title_val = embed_title
+        self.embed_desc_val = embed_desc
+        self.image_url_val = image_url
+    
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         
-        webhook_list = [url.strip() for url in self.webhooks.value.split('\n') if url.strip()]
+        webhook_list = [url.strip() for url in self.webhooks_val.split('\n') if url.strip()]
         if not webhook_list:
             await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
             return
         
-        message_list = [m.strip() for m in self.messages_list.value.split('\n') if m.strip()] if self.messages_list.value else []
+        message_list = [m.strip() for m in self.messages_list_val.split('\n') if m.strip()] if self.messages_list_val else []
         
         try:
             loop_count = int(self.loop.value) if self.loop.value else 1
@@ -2035,16 +2052,16 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
         payload = {}
         
         if message_list:
-            payload["content"] = message_list[0]  # Первое сообщение как стартовое
+            payload["content"] = message_list[0]
         
-        if self.embed_title.value or self.embed_desc.value:
+        if self.embed_title_val or self.embed_desc_val:
             embed = {}
-            if self.embed_title.value:
-                embed["title"] = self.embed_title.value
-            if self.embed_desc.value:
-                embed["description"] = self.embed_desc.value
-            if self.image_url.value:
-                embed["image"] = {"url": self.image_url.value}
+            if self.embed_title_val:
+                embed["title"] = self.embed_title_val
+            if self.embed_desc_val:
+                embed["description"] = self.embed_desc_val
+            if self.image_url_val:
+                embed["image"] = {"url": self.image_url_val}
             embed["color"] = 0xFF0000
             payload["embeds"] = [embed]
         
@@ -2087,10 +2104,9 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
                     delay = random.uniform(delay_min, delay_max)
                     await asyncio.sleep(delay)
                     
-                    # Обновляем статистику каждые 10 отправок
                     if (total_sent + total_failed) % 10 == 0:
                         try:
-                            await stats_msg.edit(content=f"📊 **Прогресс**\n🔄 Цикл: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}\n⏱️ Задержка: {delay:.2f}с")
+                            await stats_msg.edit(content=f"📊 Прогресс\n🔄 Цикл: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}")
                         except:
                             pass
             
@@ -2150,8 +2166,8 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
             if msg_count <= 0:
                 await interaction.followup.send("❌ Количество должно быть больше 0", ephemeral=True)
                 return
-            if msg_count > 5000:
-                await interaction.followup.send("⚠️ Максимум 5000 сообщений на вебхук", ephemeral=True)
+            if msg_count > 2000:
+                await interaction.followup.send("⚠️ Максимум 2000 сообщений на вебхук", ephemeral=True)
                 return
         except ValueError:
             await interaction.followup.send("❌ Неверный формат количества", ephemeral=True)
@@ -2168,12 +2184,10 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
             return
         
         random_order_flag = self.random_order.value.lower().strip() in ["да", "yes", "true", "1"]
-        
         mention_type = self.mention_all.value.lower().strip()
         
         total_sent = 0
         
-        # Расширяем список сообщений до нужного количества
         final_messages = []
         for i in range(msg_count):
             if random_order_flag:
@@ -2214,7 +2228,7 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
                     
                     if (i + 1) % 50 == 0:
                         try:
-                            await stats_msg.edit(content=f"📊 Прогресс: {i+1}/{msg_count} на вебхуке\n📨 Отправлено: {total_sent}")
+                            await stats_msg.edit(content=f"📊 Прогресс: {i+1}/{msg_count}\n📨 Отправлено: {total_sent}")
                         except:
                             pass
                     await asyncio.sleep(0.15)
@@ -2272,7 +2286,7 @@ async def setup_webhook_spam_panel():
     embed = discord.Embed(
         title="💣 ВЕБХУК СПАМ ПАНЕЛЬ",
         description="**Управление спамом через вебхуки**\n\n"
-                    "📨 **Discohook режим** - эмбеды, картинки, ротация сообщений, бесконечный цикл\n"
+                    "📨 **Discohook режим** - эмбеды, картинки, ротация сообщений, бесконечный цикл (2 страницы)\n"
                     "⚡ **Быстрый спам** - массовая отправка, случайный порядок сообщений\n"
                     "🎭 **Сменить имя** - изменить имя вебхука\n"
                     "🛑 **Тест вебхука** - проверить работоспособность\n\n"

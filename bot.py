@@ -1883,6 +1883,7 @@ async def setup_ai_panel():
 
 # ================= ВЕБХУК СПАМ ПАНЕЛЬ =================
 
+
 class WebhookSpamPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -1892,7 +1893,7 @@ class WebhookSpamPanel(discord.ui.View):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
-        modal = DiscohookModalPage1()
+        modal = DiscohookModal()
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="⚡ Быстрый спам", style=discord.ButtonStyle.primary, custom_id="spam_quick", row=0)
@@ -1947,174 +1948,135 @@ class ChangeNameModal(discord.ui.Modal, title="Смена имени вебху�
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 
-class DiscohookModalPage1(discord.ui.Modal, title="Discohook режим (стр.1/2)"):
+class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
     webhooks = discord.ui.TextInput(
         label="Вебхуки (каждый с новой строки)",
-        placeholder="https://discord.com/api/webhooks/123/abc\nhttps://discord.com/api/webhooks/456/def",
+        placeholder="https://discord.com/api/webhooks/...",
         required=True,
         style=discord.TextStyle.paragraph,
         max_length=3000
     )
-    messages_list = discord.ui.TextInput(
+    messages = discord.ui.TextInput(
         label="Сообщения (каждое с новой строки)",
-        placeholder="Сообщение 1\nСообщение 2\nСообщение 3",
-        required=False,
+        placeholder="Текст 1\nТекст 2\nТекст 3",
+        required=True,
         style=discord.TextStyle.paragraph,
         max_length=4000
     )
-    embed_title = discord.ui.TextInput(
-        label="Заголовок эмбеда",
-        placeholder="Опционально",
+    embed = discord.ui.TextInput(
+        label="Эмбед (заголовок | описание | url картинки)",
+        placeholder="Заголовок | Описание | https://image.png",
         required=False,
-        max_length=256
+        max_length=2000
     )
-    embed_desc = discord.ui.TextInput(
-        label="Описание эмбеда",
-        placeholder="Опционально",
+    settings = discord.ui.TextInput(
+        label="Циклы | мин_задержка | макс_задержка",
+        placeholder="1 | 0.1 | 0.5",
         required=False,
-        max_length=4000,
-        style=discord.TextStyle.paragraph
+        default="1 | 0.1 | 0.5"
     )
-    image_url = discord.ui.TextInput(
-        label="URL картинки",
-        placeholder="https://example.com/image.png",
-        required=False
-    )
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        modal = DiscohookModalPage2(
-            self.webhooks.value,
-            self.messages_list.value,
-            self.embed_title.value,
-            self.embed_desc.value,
-            self.image_url.value
-        )
-        await interaction.response.send_modal(modal)
-
-
-class DiscohookModalPage2(discord.ui.Modal, title="Discohook режим (стр.2/2)"):
-    mention_id = discord.ui.TextInput(
-        label="ID для упоминания",
-        placeholder="123456789012345678",
-        required=False
-    )
-    loop = discord.ui.TextInput(
-        label="Количество циклов",
-        placeholder="1 (0 - бесконечно)",
+    mention = discord.ui.TextInput(
+        label="Упоминание (ID / everyone / here)",
+        placeholder="123456789 или everyone или here",
         required=False,
-        default="1"
+        default=""
     )
-    delay_min = discord.ui.TextInput(
-        label="Мин. задержка (сек)",
-        placeholder="0.1",
-        required=False,
-        default="0.1"
-    )
-    delay_max = discord.ui.TextInput(
-        label="Макс. задержка (сек)",
-        placeholder="0.5",
-        required=False,
-        default="0.5"
-    )
-    
-    def __init__(self, webhooks, messages_list, embed_title, embed_desc, image_url):
-        super().__init__()
-        self.webhooks_val = webhooks
-        self.messages_list_val = messages_list
-        self.embed_title_val = embed_title
-        self.embed_desc_val = embed_desc
-        self.image_url_val = image_url
     
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         
-        webhook_list = [url.strip() for url in self.webhooks_val.split('\n') if url.strip()]
+        webhook_list = [url.strip() for url in self.webhooks.value.split('\n') if url.strip()]
         if not webhook_list:
             await interaction.followup.send("❌ Введите хотя бы один вебхук", ephemeral=True)
             return
         
-        message_list = [m.strip() for m in self.messages_list_val.split('\n') if m.strip()] if self.messages_list_val else []
-        
-        try:
-            loop_count = int(self.loop.value) if self.loop.value else 1
-            infinite = loop_count == 0
-        except:
-            loop_count = 1
-            infinite = False
-        
-        try:
-            delay_min = float(self.delay_min.value) if self.delay_min.value else 0.1
-            delay_max = float(self.delay_max.value) if self.delay_max.value else 0.5
-        except:
-            delay_min = 0.1
-            delay_max = 0.5
-        
-        payload = {}
-        
-        if message_list:
-            payload["content"] = message_list[0]
-        
-        if self.embed_title_val or self.embed_desc_val:
-            embed = {}
-            if self.embed_title_val:
-                embed["title"] = self.embed_title_val
-            if self.embed_desc_val:
-                embed["description"] = self.embed_desc_val
-            if self.image_url_val:
-                embed["image"] = {"url": self.image_url_val}
-            embed["color"] = 0xFF0000
-            payload["embeds"] = [embed]
-        
-        if not payload and not message_list:
-            await interaction.followup.send("❌ Заполните хотя бы текст или эмбед", ephemeral=True)
+        message_list = [m.strip() for m in self.messages.value.split('\n') if m.strip()]
+        if not message_list:
+            await interaction.followup.send("❌ Введите хотя бы одно сообщение", ephemeral=True)
             return
         
-        stats_msg = await interaction.followup.send("🔄 Запуск спама...", ephemeral=True)
+        parts = self.settings.value.split('|')
+        try:
+            loop_count = int(parts[0].strip()) if len(parts) > 0 else 1
+        except:
+            loop_count = 1
+        try:
+            delay_min = float(parts[1].strip()) if len(parts) > 1 else 0.1
+        except:
+            delay_min = 0.1
+        try:
+            delay_max = float(parts[2].strip()) if len(parts) > 2 else 0.5
+        except:
+            delay_max = 0.5
+        
+        infinite = loop_count == 0
+        
+        mention_val = self.mention.value.strip().lower()
+        mention_id = None
+        mention_type = None
+        if mention_val and mention_val != "none":
+            if mention_val.isdigit():
+                mention_id = int(mention_val)
+            elif mention_val == "everyone":
+                mention_type = "everyone"
+            elif mention_val == "here":
+                mention_type = "here"
+        
+        embed_payload = None
+        if self.embed.value and self.embed.value.strip():
+            embed_parts = self.embed.value.split('|')
+            embed_data = {}
+            if len(embed_parts) > 0 and embed_parts[0].strip():
+                embed_data["title"] = embed_parts[0].strip()
+            if len(embed_parts) > 1 and embed_parts[1].strip():
+                embed_data["description"] = embed_parts[1].strip()
+            if len(embed_parts) > 2 and embed_parts[2].strip():
+                embed_data["image"] = {"url": embed_parts[2].strip()}
+            if embed_data:
+                embed_data["color"] = 0xFF0000
+                embed_payload = [embed_data]
         
         total_sent = 0
         total_failed = 0
         cycle = 0
+        stats_msg = await interaction.followup.send("🔄 Запуск спама...", ephemeral=True)
         
-        while infinite or cycle < loop_count:
-            cycle += 1
-            for webhook_url in webhook_list:
-                for msg in message_list if message_list else [""]:
-                    final_msg = msg
-                    if self.mention_id.value and self.mention_id.value.strip():
+        async with aiohttp.ClientSession() as session:
+            while infinite or cycle < loop_count:
+                cycle += 1
+                for webhook_url in webhook_list:
+                    for msg in message_list:
+                        final_msg = msg
+                        if mention_id:
+                            final_msg = f"<@{mention_id}> {final_msg}"
+                        elif mention_type == "everyone":
+                            final_msg = f"@everyone {final_msg}"
+                        elif mention_type == "here":
+                            final_msg = f"@here {final_msg}"
+                        
+                        payload = {"content": final_msg} if final_msg else {}
+                        if embed_payload:
+                            payload["embeds"] = embed_payload
+                        
                         try:
-                            uid = int(self.mention_id.value.strip())
-                            final_msg = f"<@{uid}> {final_msg}"
-                        except:
-                            pass
-                    
-                    payload_copy = payload.copy()
-                    if final_msg:
-                        payload_copy["content"] = final_msg
-                    
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.post(webhook_url, json=payload_copy) as resp:
+                            async with session.post(webhook_url, json=payload) as resp:
                                 if resp.status in [200, 204]:
                                     total_sent += 1
                                 else:
                                     total_failed += 1
-                    except Exception:
-                        total_failed += 1
-                    
-                    delay = random.uniform(delay_min, delay_max)
-                    await asyncio.sleep(delay)
-                    
-                    if (total_sent + total_failed) % 10 == 0:
-                        try:
-                            await stats_msg.edit(content=f"📊 Прогресс\n🔄 Цикл: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}")
                         except:
-                            pass
-            
-            if infinite and not message_list:
-                break
+                            total_failed += 1
+                        
+                        await asyncio.sleep(random.uniform(delay_min, delay_max))
+                        
+                        if (total_sent + total_failed) % 10 == 0:
+                            try:
+                                await stats_msg.edit(content=f"📊 Цикл: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}")
+                            except:
+                                pass
         
         await interaction.followup.send(
-            f"✅ **Discohook режим завершён!**\n🔄 Циклов: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}",
+            f"✅ Готово!\n🔄 Циклов: {cycle}\n📨 Отправлено: {total_sent}\n❌ Ошибок: {total_failed}",
             ephemeral=True
         )
 
@@ -2286,7 +2248,7 @@ async def setup_webhook_spam_panel():
     embed = discord.Embed(
         title="💣 ВЕБХУК СПАМ ПАНЕЛЬ",
         description="**Управление спамом через вебхуки**\n\n"
-                    "📨 **Discohook режим** - эмбеды, картинки, ротация сообщений, бесконечный цикл (2 страницы)\n"
+                    "📨 **Discohook режим** - эмбеды, картинки, ротация сообщений, бесконечный цикл\n"
                     "⚡ **Быстрый спам** - массовая отправка, случайный порядок сообщений\n"
                     "🎭 **Сменить имя** - изменить имя вебхука\n"
                     "🛑 **Тест вебхука** - проверить работоспособность\n\n"

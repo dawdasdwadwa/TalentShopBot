@@ -29,6 +29,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ================= КОНСТАНТЫ =================
+COPY_PANEL_CHANNEL_ID = 1511942497574719639
 AI_CONVEYOR_CHANNEL_ID = 1509333979713769612
 TICKET_SUPPORT_CATEGORY_ID = 1503176090980454531
 TICKET_ARCHIVE_CATEGORY_ID = 1507376570082267167
@@ -1881,140 +1882,60 @@ async def setup_ai_panel():
     except Exception as e:
         logger.error(f"❌ Ошибка отправки панели ИИ-конвейера: {e}")
 
-# ================= ВЕБХУК СПАМ ПАНЕЛЬ =================
+# ================= ВЕБХУК СПАМ ПАНЕЛЬ (БЕЗОПАСНАЯ ВЕРСИЯ) =================
 spam_stop_flag = False
 
 class WebhookSpamPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
     
-    @discord.ui.button(label="📨 Discohook", style=discord.ButtonStyle.danger, custom_id="spam_discohook", row=0)
-    async def discohook_mode_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="📨 Discohook", style=discord.ButtonStyle.danger, row=0)
+    async def discohook_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await interaction.response.send_message("❌ Только Owner", ephemeral=True)
             return
         modal = DiscohookModal()
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="⚡ Быстрый", style=discord.ButtonStyle.primary, custom_id="spam_quick", row=0)
-    async def quick_spam_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="⚡ Быстрый", style=discord.ButtonStyle.primary, row=0)
+    async def quick_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await interaction.response.send_message("❌ Только Owner", ephemeral=True)
             return
         modal = QuickSpamModal()
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="🎭 Сменить имя", style=discord.ButtonStyle.secondary, custom_id="spam_name", row=1)
-    async def change_name_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🎭 Сменить имя", style=discord.ButtonStyle.secondary, row=1)
+    async def name_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await interaction.response.send_message("❌ Только Owner", ephemeral=True)
             return
         modal = ChangeNameModal()
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="🗑️ Очистка", style=discord.ButtonStyle.danger, custom_id="spam_clear", row=1)
-    async def clear_webhook_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🗑️ Очистка", style=discord.ButtonStyle.danger, row=1)
+    async def clear_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await interaction.response.send_message("❌ Только Owner", ephemeral=True)
             return
         modal = ClearWebhookModal()
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="🛑 Стоп", style=discord.ButtonStyle.danger, custom_id="spam_stop", row=1)
-    async def stop_spam_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🛑 Стоп", style=discord.ButtonStyle.danger, row=1)
+    async def stop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
-            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            await interaction.response.send_message("❌ Только Owner", ephemeral=True)
             return
         global spam_stop_flag
         spam_stop_flag = True
-        await interaction.response.send_message("🛑 Остановка спама...", ephemeral=True)
+        await interaction.response.send_message("🛑 Остановка", ephemeral=True)
 
 
-class ChangeNameModal(discord.ui.Modal, title="Смена имени вебхуков"):
-    webhooks = discord.ui.TextInput(label="Вебхуки", placeholder="https://...\nhttps://...", required=True, style=discord.TextStyle.paragraph)
-    new_name = discord.ui.TextInput(label="Новое имя", placeholder="Имя для всех", required=True, max_length=80)
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        webhook_list = [u.strip() for u in self.webhooks.value.split('\n') if u.strip()]
-        if not webhook_list:
-            await interaction.followup.send("❌ Введите вебхук", ephemeral=True)
-            return
-        success = 0
-        failed = 0
-        async with aiohttp.ClientSession() as session:
-            for url in webhook_list:
-                for attempt in range(3):
-                    try:
-                        async with session.patch(url, json={"name": self.new_name.value}) as resp:
-                            if resp.status == 429:
-                                data = await resp.json()
-                                wait = data.get('retry_after', 1)
-                                await asyncio.sleep(wait)
-                                continue
-                            if resp.status in [200, 204]:
-                                success += 1
-                            else:
-                                failed += 1
-                            break
-                    except:
-                        failed += 1
-                    await asyncio.sleep(0.5)
-        await interaction.followup.send(f"✅ Успешно: {success} | ❌ Ошибок: {failed}", ephemeral=True)
-
-
-class ClearWebhookModal(discord.ui.Modal, title="Очистка вебхука"):
-    webhook_url = discord.ui.TextInput(label="URL", placeholder="https://discord.com/api/webhooks/...", required=True)
-    count = discord.ui.TextInput(label="Кол-во", placeholder="100 (0 - все)", default="100")
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            parts = self.webhook_url.value.split('/')
-            webhook_id = parts[-2]
-            webhook_token = parts[-1]
-            del_count = int(self.count.value) if self.count.value else 100
-            deleted = 0
-            async with aiohttp.ClientSession() as session:
-                while True:
-                    async with session.get(f"https://discord.com/api/v10/webhooks/{webhook_id}/{webhook_token}/messages?limit=100") as resp:
-                        if resp.status == 429:
-                            data = await resp.json()
-                            await asyncio.sleep(data.get('retry_after', 1))
-                            continue
-                        if resp.status != 200:
-                            break
-                        messages = await resp.json()
-                        if not messages:
-                            break
-                        for msg in messages:
-                            if del_count > 0 and deleted >= del_count:
-                                break
-                            for _ in range(3):
-                                async with session.delete(f"https://discord.com/api/v10/webhooks/{webhook_id}/{webhook_token}/messages/{msg['id']}") as del_resp:
-                                    if del_resp.status == 429:
-                                        data = await del_resp.json()
-                                        await asyncio.sleep(data.get('retry_after', 1))
-                                        continue
-                                    if del_resp.status in [200, 204]:
-                                        deleted += 1
-                                    break
-                                await asyncio.sleep(0.3)
-                        if del_count > 0 and deleted >= del_count:
-                            break
-                        if len(messages) < 100:
-                            break
-                        await asyncio.sleep(0.5)
-            await interaction.followup.send(f"✅ Удалено: {deleted}", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ {e}", ephemeral=True)
-
-
-class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
+class DiscohookModal(discord.ui.Modal, title="Discohook"):
     webhooks = discord.ui.TextInput(label="Вебхуки", placeholder="https://... (каждый с новой строки)", required=True, style=discord.TextStyle.paragraph)
     messages = discord.ui.TextInput(label="Сообщения", placeholder="Текст 1\nТекст 2", required=True, style=discord.TextStyle.paragraph)
-    embed = discord.ui.TextInput(label="Эмбед: Заголовок | Описание | URL | Футер", placeholder="Заголовок | Описание | https://image.png | Текст", required=False)
-    settings = discord.ui.TextInput(label="Настройки: Циклы | Задержка | Потоки | Цвет", placeholder="0 | 0.5 | 1 | RANDOM", required=False, default="0 | 0.5 | 1 | RANDOM")
+    embed = discord.ui.TextInput(label="Эмбед", placeholder="Заголовок | Описание | URL | Футер", required=False)
+    settings = discord.ui.TextInput(label="Настройки", placeholder="Циклы | Задержка(сек) | Цвет", required=False, default="0 | 1 | RANDOM")
     mention = discord.ui.TextInput(label="Упоминание", placeholder="ID / everyone / here", required=False)
     
     async def on_submit(self, interaction: discord.Interaction):
@@ -2038,16 +1959,12 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
         except:
             loop_count = 0
         try:
-            delay = max(0.5, float(parts[1].strip()) if len(parts) > 1 else 0.5)
+            delay = max(1.0, float(parts[1].strip()) if len(parts) > 1 else 1.0)
         except:
-            delay = 0.5
-        try:
-            threads = max(1, min(int(parts[2].strip()) if len(parts) > 2 else 1, 3))
-        except:
-            threads = 1
+            delay = 1.0
         
-        color_str = parts[3].strip().upper() if len(parts) > 3 else "RANDOM"
-        color_map = {"RED": 0xFF0000, "GREEN": 0x00FF00, "BLUE": 0x0000FF, "YELLOW": 0xFFFF00, "PURPLE": 0x800080, "ORANGE": 0xFFA500, "PINK": 0xFF69B4, "CYAN": 0x00FFFF, "WHITE": 0xFFFFFF, "RANDOM": None}
+        color_str = parts[2].strip().upper() if len(parts) > 2 else "RANDOM"
+        color_map = {"RED": 0xFF0000, "GREEN": 0x00FF00, "BLUE": 0x0000FF, "YELLOW": 0xFFFF00, "RANDOM": None}
         embed_color = color_map.get(color_str, 0xFF0000) if color_str != "RANDOM" else None
         
         infinite = loop_count == 0
@@ -2064,16 +1981,16 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
         
         embed_payload = None
         if self.embed.value:
-            embed_parts = self.embed.value.split('|')
+            ep = self.embed.value.split('|')
             edata = {}
-            if len(embed_parts) > 0 and embed_parts[0].strip():
-                edata["title"] = embed_parts[0].strip()
-            if len(embed_parts) > 1 and embed_parts[1].strip():
-                edata["description"] = embed_parts[1].strip()
-            if len(embed_parts) > 2 and embed_parts[2].strip():
-                edata["image"] = {"url": embed_parts[2].strip()}
-            if len(embed_parts) > 3 and embed_parts[3].strip():
-                edata["footer"] = {"text": embed_parts[3].strip()}
+            if len(ep) > 0 and ep[0].strip():
+                edata["title"] = ep[0].strip()
+            if len(ep) > 1 and ep[1].strip():
+                edata["description"] = ep[1].strip()
+            if len(ep) > 2 and ep[2].strip():
+                edata["image"] = {"url": ep[2].strip()}
+            if len(ep) > 3 and ep[3].strip():
+                edata["footer"] = {"text": ep[3].strip()}
             if edata:
                 edata["color"] = embed_color if embed_color is not None else random.randint(0, 0xFFFFFF)
                 embed_payload = [edata]
@@ -2081,7 +1998,7 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
         total_sent = 0
         total_failed = 0
         cycle = 0
-        stats_msg = await interaction.followup.send(f"🔄 Запуск (задержка {delay}с)...", ephemeral=True)
+        await interaction.followup.send(f"🔄 Запуск (задержка {delay}с)...", ephemeral=True)
         
         async def worker(url):
             nonlocal total_sent, total_failed
@@ -2096,45 +2013,29 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
                 payload = {"content": msg} if msg else {}
                 if embed_payload:
                     payload["embeds"] = embed_payload
-                for attempt in range(3):
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.post(url, json=payload) as resp:
-                                if resp.status == 429:
-                                    data = await resp.json()
-                                    wait = data.get('retry_after', delay)
-                                    await asyncio.sleep(wait)
-                                    continue
-                                if resp.status in [200, 204]:
-                                    total_sent += 1
-                                else:
-                                    total_failed += 1
-                                break
-                    except:
-                        total_failed += 1
-                    await asyncio.sleep(0.5)
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(url, json=payload) as resp:
+                            if resp.status in [200, 204]:
+                                total_sent += 1
+                            else:
+                                total_failed += 1
+                except:
+                    total_failed += 1
                 await asyncio.sleep(delay)
         
         while not spam_stop_flag and (infinite or cycle < loop_count):
             cycle += 1
-            tasks = []
-            for url in webhook_list:
-                for _ in range(threads):
-                    tasks.append(asyncio.create_task(worker(url)))
+            tasks = [asyncio.create_task(worker(url)) for url in webhook_list]
             await asyncio.gather(*tasks)
-            if cycle % 3 == 0:
-                try:
-                    await stats_msg.edit(content=f"📊 Цикл: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}")
-                except:
-                    pass
             if infinite and not spam_stop_flag:
                 await asyncio.sleep(2)
         
         try:
+            msg = f"✅ Циклов: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}"
             if spam_stop_flag:
-                await interaction.followup.send(f"🛑 **Спам остановлен!** Циклов: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}", ephemeral=True)
-            else:
-                await interaction.followup.send(f"✅ **Готово!** Циклов: {cycle} | Отправлено: {total_sent} | Ошибок: {total_failed}", ephemeral=True)
+                msg = "🛑 " + msg
+            await interaction.followup.send(msg, ephemeral=True)
         except:
             pass
 
@@ -2142,16 +2043,15 @@ class DiscohookModal(discord.ui.Modal, title="Discohook режим"):
 class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
     webhooks = discord.ui.TextInput(label="Вебхуки", placeholder="https://... (каждый с новой строки)", required=True, style=discord.TextStyle.paragraph)
     messages = discord.ui.TextInput(label="Сообщения", placeholder="Текст 1\nТекст 2", required=True, style=discord.TextStyle.paragraph)
-    count = discord.ui.TextInput(label="Кол-во", placeholder="100", default="100")
+    count = discord.ui.TextInput(label="Кол-во", placeholder="50", default="50")
     mention = discord.ui.TextInput(label="Упоминание", placeholder="ID / everyone / here", required=False)
-    random_order = discord.ui.TextInput(label="Случайный", placeholder="да/нет", default="да")
     
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            cnt = max(1, min(int(self.count.value), 1000))
+            cnt = max(1, min(int(self.count.value), 200))
         except:
-            cnt = 100
+            cnt = 50
         
         webhook_list = [u.strip() for u in self.webhooks.value.split('\n') if u.strip()]
         if not webhook_list:
@@ -2163,7 +2063,6 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
             await interaction.followup.send("❌ Введите сообщение", ephemeral=True)
             return
         
-        random_flag = self.random_order.value.lower().strip() in ["да", "yes", "true", "1"]
         mention_val = self.mention.value.strip().lower()
         mention_id = None
         mention_type = None
@@ -2176,40 +2075,71 @@ class QuickSpamModal(discord.ui.Modal, title="Быстрый спам"):
                 mention_type = "here"
         
         total_sent = 0
-        stats_msg = await interaction.followup.send(f"🔄 Запуск ({cnt} сообщений)...", ephemeral=True)
+        await interaction.followup.send(f"🔄 Запуск ({cnt} сообщений)...", ephemeral=True)
         
         async with aiohttp.ClientSession() as session:
             for url in webhook_list:
                 for i in range(cnt):
-                    if random_flag:
-                        msg = random.choice(msg_list)
-                    else:
-                        msg = msg_list[i % len(msg_list)]
+                    msg = random.choice(msg_list)
                     if mention_id:
                         msg = f"<@{mention_id}> {msg}"
                     elif mention_type:
                         msg = f"@{mention_type} {msg}"
-                    for _ in range(3):
-                        try:
-                            async with session.post(url, json={"content": msg}) as resp:
-                                if resp.status == 429:
-                                    data = await resp.json()
-                                    await asyncio.sleep(data.get('retry_after', 1))
-                                    continue
-                                if resp.status in [200, 204]:
-                                    total_sent += 1
-                                break
-                        except:
-                            pass
-                        await asyncio.sleep(0.3)
-                    if (i + 1) % 50 == 0:
-                        try:
-                            await stats_msg.edit(content=f"📊 {i+1}/{cnt} | Отправлено: {total_sent}")
-                        except:
-                            pass
-                    await asyncio.sleep(0.3)
+                    try:
+                        async with session.post(url, json={"content": msg}) as resp:
+                            if resp.status in [200, 204]:
+                                total_sent += 1
+                    except:
+                        pass
+                    await asyncio.sleep(0.5)
         
-        await interaction.followup.send(f"✅ Готово! Отправлено: {total_sent}", ephemeral=True)
+        await interaction.followup.send(f"✅ Отправлено: {total_sent}", ephemeral=True)
+
+
+class ChangeNameModal(discord.ui.Modal, title="Смена имени"):
+    webhooks = discord.ui.TextInput(label="Вебхуки", placeholder="https://...\nhttps://...", required=True, style=discord.TextStyle.paragraph)
+    new_name = discord.ui.TextInput(label="Новое имя", placeholder="Имя", required=True, max_length=80)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        webhook_list = [u.strip() for u in self.webhooks.value.split('\n') if u.strip()]
+        success = 0
+        async with aiohttp.ClientSession() as session:
+            for url in webhook_list:
+                try:
+                    async with session.patch(url, json={"name": self.new_name.value}) as resp:
+                        if resp.status in [200, 204]:
+                            success += 1
+                except:
+                    pass
+                await asyncio.sleep(0.5)
+        await interaction.followup.send(f"✅ Изменено: {success} из {len(webhook_list)}", ephemeral=True)
+
+
+class ClearWebhookModal(discord.ui.Modal, title="Очистка"):
+    webhook_url = discord.ui.TextInput(label="URL", placeholder="https://discord.com/api/webhooks/...", required=True)
+    count = discord.ui.TextInput(label="Кол-во", placeholder="50", default="50")
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            parts = self.webhook_url.value.split('/')
+            wid = parts[-2]
+            token = parts[-1]
+            del_count = int(self.count.value) if self.count.value else 50
+            deleted = 0
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"https://discord.com/api/v10/webhooks/{wid}/{token}/messages?limit=50") as resp:
+                    if resp.status == 200:
+                        for msg in await resp.json():
+                            if deleted >= del_count:
+                                break
+                            await session.delete(f"https://discord.com/api/v10/webhooks/{wid}/{token}/messages/{msg['id']}")
+                            deleted += 1
+                            await asyncio.sleep(0.3)
+            await interaction.followup.send(f"✅ Удалено: {deleted}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ {e}", ephemeral=True)
 
 
 async def setup_webhook_spam_panel():
@@ -2222,8 +2152,493 @@ async def setup_webhook_spam_panel():
     async for msg in channel.history(limit=50):
         if msg.author == bot.user:
             await msg.delete()
-    embed = discord.Embed(title="💣 ВЕБХУК ПАНЕЛЬ", description="📨 Discohook | ⚡ Быстрый | 🎭 Сменить имя | 🗑️ Очистка | 🛑 Стоп\n\n⚠️ Задержка 0.5с для защиты от лимитов", color=discord.Color.red())
+    embed = discord.Embed(title="💣 ВЕБХУК ПАНЕЛЬ", description="📨 Discohook | ⚡ Быстрый | 🎭 Сменить имя | 🗑️ Очистка | 🛑 Стоп\n\n⚠️ Задержка 1 секунда для защиты от бана", color=discord.Color.red())
     await channel.send(embed=embed, view=WebhookSpamPanel())
+
+# ================= ПАНЕЛЬ КОПИРОВАНИЯ СЕРВЕРА =================
+
+# ================= ПАНЕЛЬ КОПИРОВАНИЯ СЕРВЕРА =================
+class CopyServerPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="📋 Копировать сервер", style=discord.ButtonStyle.primary, custom_id="copy_server_btn", row=0)
+    async def copy_server_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = CopyServerModal()
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="🔄 Копировать роли", style=discord.ButtonStyle.secondary, custom_id="copy_roles_btn", row=0)
+    async def copy_roles_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = CopyRolesModal()
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="📁 Копировать каналы", style=discord.ButtonStyle.secondary, custom_id="copy_channels_btn", row=0)
+    async def copy_channels_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = CopyChannelsModal()
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="🔗 Копировать вебхуки", style=discord.ButtonStyle.success, custom_id="copy_webhooks_btn", row=1)
+    async def copy_webhooks_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = CopyWebhooksModal()
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="⚙️ Копировать настройки", style=discord.ButtonStyle.success, custom_id="copy_settings_btn", row=1)
+    async def copy_settings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        modal = CopySettingsModal()
+        await interaction.response.send_modal(modal)
+
+
+class CopyServerModal(discord.ui.Modal, title="Копирование сервера"):
+    target_guild_id = discord.ui.TextInput(
+        label="ID сервера для копирования",
+        placeholder="123456789012345678",
+        required=True
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            target_id = int(self.target_guild_id.value.strip())
+            target_guild = bot.get_guild(target_id)
+            if not target_guild:
+                target_guild = await bot.fetch_guild(target_id)
+            
+            current_guild = interaction.guild
+            created = {"roles": 0, "categories": 0, "channels": 0}
+            
+            status_msg = await interaction.followup.send("🔄 Начинаю копирование...", ephemeral=True)
+            
+            # 1. Копируем роли
+            role_positions = {}
+            for role in reversed(target_guild.roles):
+                if role.name == "@everyone":
+                    continue
+                try:
+                    new_role = await current_guild.create_role(
+                        name=role.name,
+                        color=role.color,
+                        permissions=role.permissions,
+                        hoist=role.hoist,
+                        mentionable=role.mentionable
+                    )
+                    role_positions[role.position] = new_role
+                    created["roles"] += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+                
+                if created["roles"] % 5 == 0:
+                    await status_msg.edit(content=f"🔄 Копирование ролей: {created['roles']}...")
+            
+            for pos in sorted(role_positions.keys(), reverse=True):
+                try:
+                    await role_positions[pos].edit(position=pos)
+                except:
+                    pass
+            
+            await status_msg.edit(content=f"✅ Роли скопированы ({created['roles']}). Копирую категории...")
+            
+            # 2. Копируем категории
+            category_map = {}
+            for category in target_guild.categories:
+                try:
+                    new_category = await current_guild.create_category(
+                        name=category.name,
+                        position=category.position
+                    )
+                    category_map[category.id] = new_category
+                    created["categories"] += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            await status_msg.edit(content=f"✅ Категории скопированы ({created['categories']}). Копирую каналы...")
+            
+            # 3. Копируем каналы
+            for channel in target_guild.channels:
+                if isinstance(channel, discord.TextChannel):
+                    try:
+                        parent = category_map.get(channel.category_id) if channel.category_id else None
+                        await current_guild.create_text_channel(
+                            name=channel.name,
+                            category=parent,
+                            position=channel.position,
+                            topic=channel.topic[:100] if channel.topic else None,
+                            slowmode_delay=channel.slowmode_delay
+                        )
+                        created["channels"] += 1
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+                        
+                elif isinstance(channel, discord.VoiceChannel):
+                    try:
+                        parent = category_map.get(channel.category_id) if channel.category_id else None
+                        await current_guild.create_voice_channel(
+                            name=channel.name,
+                            category=parent,
+                            position=channel.position,
+                            bitrate=min(channel.bitrate, 96000),
+                            user_limit=channel.user_limit
+                        )
+                        created["channels"] += 1
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+            
+            await interaction.followup.send(
+                f"✅ **Копирование завершено!**\n"
+                f"📁 Ролей: {created['roles']}\n"
+                f"📂 Категорий: {created['categories']}\n"
+                f"💬 Каналов: {created['channels']}",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+class CopyRolesModal(discord.ui.Modal, title="Копирование ролей"):
+    target_guild_id = discord.ui.TextInput(
+        label="ID сервера для копирования",
+        placeholder="123456789012345678",
+        required=True
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            target_id = int(self.target_guild_id.value.strip())
+            target_guild = bot.get_guild(target_id)
+            if not target_guild:
+                target_guild = await bot.fetch_guild(target_id)
+            
+            current_guild = interaction.guild
+            created = 0
+            
+            role_positions = {}
+            for role in reversed(target_guild.roles):
+                if role.name == "@everyone":
+                    continue
+                try:
+                    new_role = await current_guild.create_role(
+                        name=role.name,
+                        color=role.color,
+                        permissions=role.permissions,
+                        hoist=role.hoist,
+                        mentionable=role.mentionable
+                    )
+                    role_positions[role.position] = new_role
+                    created += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            for pos in sorted(role_positions.keys(), reverse=True):
+                try:
+                    await role_positions[pos].edit(position=pos)
+                except:
+                    pass
+            
+            await interaction.followup.send(f"✅ Скопировано ролей: {created}", ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+class CopyChannelsModal(discord.ui.Modal, title="Копирование каналов"):
+    target_guild_id = discord.ui.TextInput(
+        label="ID сервера для копирования",
+        placeholder="123456789012345678",
+        required=True
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            target_id = int(self.target_guild_id.value.strip())
+            target_guild = bot.get_guild(target_id)
+            if not target_guild:
+                target_guild = await bot.fetch_guild(target_id)
+            
+            current_guild = interaction.guild
+            created = {"categories": 0, "channels": 0}
+            
+            category_map = {}
+            for category in target_guild.categories:
+                try:
+                    new_category = await current_guild.create_category(
+                        name=category.name,
+                        position=category.position
+                    )
+                    category_map[category.id] = new_category
+                    created["categories"] += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+            
+            for channel in target_guild.channels:
+                if isinstance(channel, discord.TextChannel):
+                    try:
+                        parent = category_map.get(channel.category_id) if channel.category_id else None
+                        await current_guild.create_text_channel(
+                            name=channel.name,
+                            category=parent,
+                            position=channel.position,
+                            topic=channel.topic[:100] if channel.topic else None,
+                            slowmode_delay=channel.slowmode_delay
+                        )
+                        created["channels"] += 1
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+                        
+                elif isinstance(channel, discord.VoiceChannel):
+                    try:
+                        parent = category_map.get(channel.category_id) if channel.category_id else None
+                        await current_guild.create_voice_channel(
+                            name=channel.name,
+                            category=parent,
+                            position=channel.position,
+                            bitrate=min(channel.bitrate, 96000),
+                            user_limit=channel.user_limit
+                        )
+                        created["channels"] += 1
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+            
+            await interaction.followup.send(
+                f"✅ Скопировано:\n📂 Категорий: {created['categories']}\n💬 Каналов: {created['channels']}",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+class CopyWebhooksModal(discord.ui.Modal, title="Копирование вебхуков"):
+    target_guild_id = discord.ui.TextInput(
+        label="ID сервера откуда копировать",
+        placeholder="123456789012345678",
+        required=True
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            target_id = int(self.target_guild_id.value.strip())
+            target_guild = bot.get_guild(target_id)
+            if not target_guild:
+                target_guild = await bot.fetch_guild(target_id)
+            
+            current_guild = interaction.guild
+            created = 0
+            failed = 0
+            
+            status_msg = await interaction.followup.send("🔄 Копирование вебхуков...", ephemeral=True)
+            
+            # Сопоставляем каналы по имени
+            channel_map = {}
+            for target_channel in target_guild.channels:
+                for source_channel in current_guild.channels:
+                    if source_channel.name == target_channel.name:
+                        channel_map[target_channel.id] = source_channel
+                        break
+            
+            for target_channel in target_guild.channels:
+                target_webhooks = await target_channel.webhooks()
+                source_channel = channel_map.get(target_channel.id)
+                
+                if source_channel and target_webhooks:
+                    for webhook in target_webhooks:
+                        try:
+                            await source_channel.create_webhook(
+                                name=webhook.name,
+                                reason="Копирование вебхуков"
+                            )
+                            created += 1
+                            await asyncio.sleep(0.5)
+                        except Exception:
+                            failed += 1
+            
+            await interaction.followup.send(
+                f"✅ **Копирование вебхуков завершено!**\n"
+                f"🔗 Создано: {created}\n"
+                f"❌ Ошибок: {failed}",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+class CopySettingsModal(discord.ui.Modal, title="Копирование настроек сервера"):
+    target_guild_id = discord.ui.TextInput(
+        label="ID сервера откуда копировать",
+        placeholder="123456789012345678",
+        required=True
+    )
+    copy_boost = discord.ui.TextInput(
+        label="Копировать настройки буста",
+        placeholder="да/нет",
+        required=False,
+        default="нет"
+    )
+    copy_bans = discord.ui.TextInput(
+        label="Копировать баны",
+        placeholder="да/нет",
+        required=False,
+        default="нет"
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        try:
+            target_id = int(self.target_guild_id.value.strip())
+            target_guild = bot.get_guild(target_id)
+            if not target_guild:
+                target_guild = await bot.fetch_guild(target_id)
+            
+            current_guild = interaction.guild
+            copy_bans_flag = self.copy_bans.value.lower().strip() in ["да", "yes", "true", "1"]
+            
+            settings = {}
+            
+            # 1. Копируем название сервера
+            try:
+                await current_guild.edit(name=target_guild.name)
+                settings["name"] = "✅"
+            except:
+                settings["name"] = "❌"
+            
+            # 2. Копируем иконку сервера
+            if target_guild.icon:
+                try:
+                    icon_data = await target_guild.icon.read()
+                    await current_guild.edit(icon=icon_data)
+                    settings["icon"] = "✅"
+                except:
+                    settings["icon"] = "❌"
+            else:
+                settings["icon"] = "⏭️"
+            
+            # 3. Копируем баннер (требуется буст)
+            if self.copy_boost.value.lower().strip() in ["да", "yes", "true", "1"] and target_guild.banner:
+                try:
+                    banner_data = await target_guild.banner.read()
+                    await current_guild.edit(banner=banner_data)
+                    settings["banner"] = "✅"
+                except:
+                    settings["banner"] = "❌ (нужен буст)"
+            else:
+                settings["banner"] = "⏭️"
+            
+            # 4. Копируем уровень верификации
+            try:
+                await current_guild.edit(verification_level=target_guild.verification_level)
+                settings["verification"] = "✅"
+            except:
+                settings["verification"] = "❌"
+            
+            # 5. Копируем уровень модерации контента
+            try:
+                await current_guild.edit(content_filter=target_guild.explicit_content_filter)
+                settings["content_filter"] = "✅"
+            except:
+                settings["content_filter"] = "❌"
+            
+            # 6. Копируем язык
+            try:
+                await current_guild.edit(preferred_locale=target_guild.preferred_locale)
+                settings["locale"] = "✅"
+            except:
+                settings["locale"] = "❌"
+            
+            # 7. Копируем список банов
+            if copy_bans_flag:
+                banned_users = []
+                async for entry in target_guild.bans():
+                    banned_users.append(entry.user)
+                    await asyncio.sleep(0.3)
+                
+                banned_count = 0
+                for user in banned_users:
+                    try:
+                        await current_guild.ban(user, reason="Копирование банов")
+                        banned_count += 1
+                        await asyncio.sleep(0.5)
+                    except:
+                        pass
+                settings["bans"] = f"✅ ({banned_count})"
+            else:
+                settings["bans"] = "⏭️"
+            
+            report = f"**Настройки сервера:**\n"
+            report += f"📛 Название: {settings['name']}\n"
+            report += f"🖼️ Иконка: {settings['icon']}\n"
+            report += f"🎨 Баннер: {settings['banner']}\n"
+            report += f"🔒 Верификация: {settings['verification']}\n"
+            report += f"📋 Модерация: {settings['content_filter']}\n"
+            report += f"🌐 Язык: {settings['locale']}\n"
+            report += f"🚫 Баны: {settings['bans']}"
+            
+            await interaction.followup.send(report, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+
+async def setup_copy_panel():
+    channel = bot.get_channel(COPY_PANEL_CHANNEL_ID)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(COPY_PANEL_CHANNEL_ID)
+        except Exception as e:
+            logger.error(f"Канал копирования {COPY_PANEL_CHANNEL_ID} не найден: {e}")
+            return
+    
+    try:
+        async for msg in channel.history(limit=50):
+            if msg.author == bot.user:
+                await msg.delete()
+    except Exception:
+        pass
+    
+    embed = discord.Embed(
+        title="📋 ПАНЕЛЬ КОПИРОВАНИЯ СЕРВЕРА",
+        description="**Выберите действие:**\n\n"
+                    "📋 **Копировать сервер** - полное копирование (роли, категории, каналы)\n"
+                    "🔄 **Копировать роли** - только роли\n"
+                    "📁 **Копировать каналы** - только категории и каналы\n"
+                    "🔗 **Копировать вебхуки** - перенос вебхуков\n"
+                    "⚙️ **Копировать настройки** - название, иконка, уровень верификации, баны\n\n"
+                    "⚠️ Требуются права администратора",
+        color=discord.Color.blue()
+    )
+    view = CopyServerPanel()
+    await channel.send(embed=embed, view=view)
+    logger.info("✅ Панель копирования сервера отправлена")
 
 # ================= ЗАПУСК =================
 async def _safe_task(coro, name: str):
@@ -2239,6 +2654,11 @@ async def _startup_background():
         logger.info("✅ Вебхук спам панель настроена")
     except Exception as e:  
         logger.error(f"❌ Ошибка настройки спам панели: {e}")
+    try:
+        await setup_copy_panel()
+        logger.info("✅ Панель копирования настроена")
+    except Exception as e:
+        logger.error(f"❌ Ошибка настройки панели копирования: {e}")
     try:
         await db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot)
         logger.info("✅ Восстановление из бэкапа завершено")

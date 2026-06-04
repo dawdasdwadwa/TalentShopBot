@@ -1229,6 +1229,8 @@ async def restore_from_backup_channel(channel_id: int, bot):
     
     return False
 
+
+
 # ================= АВТОМАТИЧЕСКИЙ БАН ПИРАТОВ =================
 async def add_to_blacklist_auto(user_hash: int) -> bool:
     """Добавляет хэш нарушителя в черный список базы данных и обновляет кэш."""

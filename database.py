@@ -45,6 +45,8 @@ class Lot:
     category_id: int = 0
     image_url: Optional[str] = None
     role_id: Optional[int] = None
+    product_code: str = "none"
+    duration: str = "30d"
 
 @dataclass
 class Category:
@@ -255,14 +257,18 @@ async def init_db():
             await db.execute("PRAGMA mmap_size=268435456")
             await db.execute("PRAGMA cache_size=-64000")
 
+            # Таблица categories — добавить parent_id
             await db.execute('''CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 emoji TEXT DEFAULT '📁',
                 description TEXT,
-                image_url TEXT
+                image_url TEXT,
+                parent_id INTEGER DEFAULT NULL,
+                FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE CASCADE
             )''')
-
+            
+            # Таблица lots — добавить product_code и duration
             await db.execute('''CREATE TABLE IF NOT EXISTS lots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -274,9 +280,10 @@ async def init_db():
                 category_id INTEGER,
                 image_url TEXT,
                 role_id INTEGER,
+                product_code TEXT NOT NULL DEFAULT 'none',
+                duration TEXT NOT NULL DEFAULT '30d',
                 FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
             )''')
-
             await db.execute('CREATE INDEX IF NOT EXISTS idx_lots_category ON lots(category_id)')
             await db.execute('CREATE INDEX IF NOT EXISTS idx_lots_seller ON lots(seller_id)')
 
@@ -432,6 +439,24 @@ async def init_db():
             await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_user_cat ON ai_history(user_id, category)')
 
             await db.commit()
+
+            # Миграции
+            try:
+                await db.execute("ALTER TABLE categories ADD COLUMN parent_id INTEGER DEFAULT NULL")
+                await db.commit()
+            except:
+                pass
+            try:
+                await db.execute("ALTER TABLE lots ADD COLUMN product_code TEXT NOT NULL DEFAULT 'none'")
+                await db.commit()
+            except:
+                pass
+            try:
+                await db.execute("ALTER TABLE lots ADD COLUMN duration TEXT NOT NULL DEFAULT '30d'")
+                await db.commit()
+            except:
+                pass
+            
             await refresh_cache()
 
         except Exception as e:
@@ -585,7 +610,9 @@ async def get_all_lots() -> Dict[int, Lot]:
             short_description=row['short_description'] or "",
             full_description=row['full_description'] or "",
             seller_id=row['seller_id'], category_id=row['category_id'],
-            image_url=row['image_url'], role_id=row['role_id']
+            image_url=row['image_url'], role_id=row['role_id'],
+            product_code=row['product_code'] or 'none',
+            duration=row['duration'] or '30d',
         )
         for row in lot_rows
     }
@@ -606,7 +633,9 @@ async def get_lot(lot_id: int) -> Optional[Lot]:
         short_description=row['short_description'] or "",
         full_description=row['full_description'] or "",
         seller_id=row['seller_id'], category_id=row['category_id'],
-        image_url=row['image_url'], role_id=row['role_id']
+        image_url=row['image_url'], role_id=row['role_id'],
+        product_code=row['product_code'] or 'none',
+        duration=row['duration'] or '30d',
     )
     lots_cache[lot_id] = result
     return result
@@ -668,17 +697,36 @@ async def search_lots(query: str) -> List[Lot]:
     return result
 
 async def add_lot(name: str, price: str, short_description: str, full_description: str,
-                  seller_id: int, category_id: int, stock: int = 0, image_url: str = None, role_id: int = None) -> int:
+                  seller_id: int, category_id: int, stock: int = 0,
+                  image_url: str = None, role_id: int = None,
+                  product_code: str = 'none', duration: str = '30d') -> int:
     global lots_cache, categories_cache
     async with transaction():
         cursor = await _execute_no_lock(
-            'INSERT INTO lots (name, price, stock, short_description, full_description, seller_id, category_id, image_url, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            (name, price, stock, short_description, full_description, seller_id, category_id, image_url, role_id)
+            '''INSERT INTO lots (name, price, stock, short_description, full_description,
+               seller_id, category_id, image_url, role_id, product_code, duration)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (name, price, stock, short_description, full_description,
+             seller_id, category_id, image_url, role_id, product_code, duration)
         )
-        lot_id = cursor.lastrowid
         lots_cache = {}
         categories_cache = {}
-        return lot_id
+        return cursor.lastrowid
+
+async def get_subcategories(parent_id: Optional[int] = None) -> List[Category]:
+    if parent_id is None:
+        rows = await fetchall('SELECT * FROM categories WHERE parent_id IS NULL ORDER BY id')
+    else:
+        rows = await fetchall('SELECT * FROM categories WHERE parent_id = ? ORDER BY id', (parent_id,))
+    result = []
+    for row in rows:
+        lots_rows = await fetchall('SELECT id FROM lots WHERE category_id = ?', (row['id'],))
+        result.append(Category(
+            id=row['id'], name=row['name'], emoji=row['emoji'] or '📁',
+            description=row['description'], image_url=row['image_url'],
+            lots=[r['id'] for r in lots_rows]
+        ))
+    return result
 
 async def update_lot(lot_id: int, **kwargs):
     global lots_cache, categories_cache

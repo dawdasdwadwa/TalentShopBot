@@ -716,90 +716,88 @@ async def lot_select_callback(interaction: discord.Interaction, select):
 
 # ================= ShopView =================
 class ShopView(discord.ui.View):
-    def __init__(self, page: int = 0):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.page = page
-        self.categories_list = list(db.categories_cache.values())
         self.update_items()
-    
+
     def update_items(self):
         self.clear_items()
-        if not self.categories_list:
-            search_btn = discord.ui.Button(label="🔍 Поиск", style=discord.ButtonStyle.primary)
-            search_btn.callback = self.search_callback
-            self.add_item(search_btn)
-            return
-        
-        start = self.page * 24
-        end = start + 24
-        page_categories = self.categories_list[start:end]
-        if page_categories:
-            options = [discord.SelectOption(label=cat.name, description=f"Товаров: {len(cat.lots)}", value=str(cat.id), emoji=cat.emoji) for cat in page_categories]
-            select = discord.ui.Select(placeholder="📁 Выберите категорию...", options=options)
+        root_cats = [c for c in db.categories_cache.values() if not hasattr(c, 'parent_id')]
+        # Используем новую функцию — но для View нужен синхронный доступ через кэш
+        options = []
+        for cat in db.categories_cache.values():
+            options.append(discord.SelectOption(
+                label=cat.name, value=str(cat.id), emoji=cat.emoji,
+                description=f"Товаров: {len(cat.lots)}"
+            ))
+        if options:
+            select = discord.ui.Select(placeholder="📁 Выберите категорию...", options=options[:25])
             select.callback = self.category_callback
             self.add_item(select)
-        
-        if len(self.categories_list) > 24:
-            if self.page > 0:
-                prev_btn = discord.ui.Button(label="◀️ Назад", style=discord.ButtonStyle.secondary)
-                prev_btn.callback = self.prev_page
-                self.add_item(prev_btn)
-            if end < len(self.categories_list):
-                next_btn = discord.ui.Button(label="Вперёд ▶️", style=discord.ButtonStyle.secondary)
-                next_btn.callback = self.next_page
-                self.add_item(next_btn)
-        
         search_btn = discord.ui.Button(label="🔍 Поиск", style=discord.ButtonStyle.primary)
         search_btn.callback = self.search_callback
         self.add_item(search_btn)
-    
+
     async def search_callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ShopSearchModal())
-    
+
     async def category_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            category_id = int(interaction.data['values'][0])
-            category = await db.get_category(category_id)
-            if not category:
-                await interaction.followup.send("❌ Категория не найдена", ephemeral=True)
-                return
+        await interaction.response.defer(ephemeral=True)
+        category_id = int(interaction.data['values'][0])
+        # Проверяем есть ли подкатегории
+        subcats = await db.get_subcategories(category_id)
+        if subcats:
+            # Показываем подкатегории
+            view = SubCategoryView(subcats)
+            embed = discord.Embed(title=f"📁 Выберите подкатегорию", color=discord.Color.blue())
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        else:
+            # Показываем товары
             lots_in_category = await db.get_lots_by_category_full(category_id)
             if not lots_in_category:
-                embed = discord.Embed(title=f"📁 {category.name}", description="В этой категории пока нет товаров.", color=discord.Color.blue())
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send("В этой категории нет товаров.", ephemeral=True)
                 return
-            embed = discord.Embed(title=f"📁 {category.name}", description="**Выбери товар из списка ниже:**", color=discord.Color.blue())
-            if category.image_url and category.image_url.startswith(('http://', 'https://')):
-                embed.set_image(url=category.image_url)
+            category = await db.get_category(category_id)
+            embed = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
             for lot in lots_in_category:
-                seller = interaction.guild.get_member(lot.seller_id)
-                seller_name = seller.display_name if seller else "Продавец"
-                
-                if lot.stock == -1:
-                    stock_text = "♾️ Бесконечно"
-                elif lot.stock > 0:
-                    stock_text = f"📦 В наличии: {lot.stock}"
-                else:
-                    stock_text = "❌ Нет в наличии"
-                
-                desc = (lot.short_description or "")[:80]
-                embed.add_field(name=f"🛒 {lot.name}", value=f"💰 **Цена:** {lot.price}\n{stock_text}\n📝 {desc}\n👤 **Продавец:** {seller_name}", inline=False)
+                stock_text = "♾️" if lot.stock == -1 else (f"📦 {lot.stock}" if lot.stock > 0 else "❌")
+                embed.add_field(name=f"🛒 {lot.name}", value=f"💰 {lot.price}\n{stock_text}", inline=False)
             view = LotsView(category_id, lots_in_category)
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        except Exception as e:
-            logger.exception("Ошибка category_callback")
-            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
-    
-    async def prev_page(self, interaction: discord.Interaction):
-        self.page -= 1
-        self.update_items()
-        await interaction.response.edit_message(view=self)
-    
-    async def next_page(self, interaction: discord.Interaction):
-        self.page += 1
-        self.update_items()
-        await interaction.response.edit_message(view=self)
+
+
+class SubCategoryView(discord.ui.View):
+    def __init__(self, subcats: list):
+        super().__init__(timeout=None)
+        options = [
+            discord.SelectOption(label=cat.name, value=str(cat.id), emoji=cat.emoji)
+            for cat in subcats
+        ]
+        select = discord.ui.Select(placeholder="📂 Выберите подкатегорию...", options=options[:25])
+        select.callback = self.subcat_callback
+        self.add_item(select)
+
+    async def subcat_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        category_id = int(interaction.data['values'][0])
+        # Проверяем ещё один уровень вложенности
+        subcats = await db.get_subcategories(category_id)
+        if subcats:
+            view = SubCategoryView(subcats)
+            embed = discord.Embed(title="📁 Выберите подкатегорию", color=discord.Color.blue())
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        else:
+            lots_in_category = await db.get_lots_by_category_full(category_id)
+            if not lots_in_category:
+                await interaction.followup.send("В этой категории нет товаров.", ephemeral=True)
+                return
+            category = await db.get_category(category_id)
+            embed = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
+            for lot in lots_in_category:
+                stock_text = "♾️" if lot.stock == -1 else (f"📦 {lot.stock}" if lot.stock > 0 else "❌")
+                embed.add_field(name=f"🛒 {lot.name}", value=f"💰 {lot.price}\n{stock_text}\n📝 {lot.short_description[:80]}", inline=False)
+            view = LotsView(category_id, lots_in_category)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 # ================= СПИСОК ТОВАРОВ =================
 class LotsView(discord.ui.View):
@@ -999,7 +997,12 @@ class LotActionView(discord.ui.View):
                 revenue = int(price_num) if price_num else 0
                 await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=revenue)
                 
-                ticket_view = OrderCloseView(ticket_channel.id, interaction.user.id, self.seller, voice_channel.id if voice_channel else None)
+                ticket_view = OrderCloseView(
+                    ticket_channel.id, interaction.user.id, self.seller,
+                    voice_channel.id if voice_channel else None,
+                    lot_product_code=lot_data.product_code,
+                    lot_duration=lot_data.duration
+                )
                 await ticket_channel.send("✅ **Для завершения используйте кнопки ниже:**", view=ticket_view)
                 
                 try:
@@ -1024,24 +1027,87 @@ class LotActionView(discord.ui.View):
         except Exception:
             pass
 
+# Константы для Railway API лицензий
+LICENSE_API_URL = os.getenv("LICENSE_API_URL", "")
+LICENSE_ADMIN_TOKEN = os.getenv("LICENSE_ADMIN_TOKEN", "")
+
+async def generate_license_key(product: str, duration: str) -> Optional[str]:
+    if not LICENSE_API_URL or not LICENSE_ADMIN_TOKEN:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{LICENSE_API_URL}/generate_key",
+                json={"duration": duration, "product": product},
+                headers={"x-admin-token": LICENSE_ADMIN_TOKEN},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("license_key")
+    except Exception as e:
+        logger.error(f"generate_license_key error: {e}")
+    return None
+
+
+# Заменить класс OrderCloseView:
 class OrderCloseView(discord.ui.View):
-    def __init__(self, ticket_channel_id: int, buyer_id: int, seller, voice_channel_id: Optional[int] = None):
+    def __init__(self, ticket_channel_id: int, buyer_id: int, seller,
+                 voice_channel_id: Optional[int] = None,
+                 lot_product_code: str = 'none', lot_duration: str = '30d'):
         super().__init__(timeout=None)
         self.ticket_channel_id = ticket_channel_id
         self.buyer_id = buyer_id
         self.seller = seller
         self.voice_channel_id = voice_channel_id
+        self.lot_product_code = lot_product_code
+        self.lot_duration = lot_duration
+
+    @discord.ui.button(label="🔑 Выдать ключ", style=discord.ButtonStyle.green, custom_id="issue_key_btn")
+    async def issue_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        is_seller = self.seller and interaction.user.id == self.seller.id
+        if not (is_seller or is_admin_member(interaction.user)):
+            await interaction.response.send_message("❌ Только продавец или админ.", ephemeral=True)
+            return
+        if self.lot_product_code == 'none':
+            await interaction.response.send_message("❌ У этого товара нет лицензионного ключа.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        license_key = await generate_license_key(self.lot_product_code, self.lot_duration)
+        if not license_key:
+            await interaction.followup.send("❌ Ошибка генерации ключа. Проверьте настройки API.", ephemeral=True)
+            return
+        buyer = interaction.guild.get_member(self.buyer_id)
+        product_label = 'АХК Рыбалка' if self.lot_product_code == 'rybalka' else 'АХК Грузчик'
+        duration_label = {'1d': '1 день', '7d': '7 дней', '30d': '30 дней', 'lifetime': 'Lifetime'}.get(self.lot_duration, self.lot_duration)
+        # Отправить в ЛС покупателю
+        try:
+            await buyer.send(
+                f"🔑 **Ваш лицензионный ключ TALENT SHOP:**\n"
+                f"```{license_key}```\n"
+                f"📦 Продукт: **{product_label}**\n"
+                f"⏳ Срок: **{duration_label}**\n\n"
+                f"Введите ключ при первом запуске программы."
+            )
+            await interaction.channel.send(f"✅ Ключ отправлен {buyer.mention if buyer else 'покупателю'} в ЛС.")
+        except discord.Forbidden:
+            await interaction.channel.send(
+                f"⚠️ Не удалось отправить в ЛС. Ключ:\n||`{license_key}`||"
+            )
+        # Деактивировать кнопку
+        button.disabled = True
+        button.label = "✅ Ключ выдан"
+        await interaction.message.edit(view=self)
+
     @discord.ui.button(label="🔒 Закрыть заказ", style=discord.ButtonStyle.danger, custom_id="close_order_btn")
     async def close_order(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_buyer = interaction.user.id == self.buyer_id
         is_seller = self.seller and interaction.user.id == self.seller.id
         if not (is_buyer or is_seller or is_admin_member(interaction.user)):
-            await interaction.response.send_message("❌ Только покупатель, продавец или админ могут закрыть заказ.", ephemeral=True)
+            await interaction.response.send_message("❌ Только покупатель, продавец или админ.", ephemeral=True)
             return
         await interaction.response.defer()
-        ticket_channel = interaction.guild.get_channel(self.ticket_channel_id)
-        if ticket_channel:
-            await db.close_ticket(self.ticket_channel_id)
+        await db.close_ticket(self.ticket_channel_id)
         if self.voice_channel_id:
             vc = interaction.guild.get_channel(self.voice_channel_id)
             if vc:
@@ -1049,7 +1115,7 @@ class OrderCloseView(discord.ui.View):
                     await vc.delete()
                 except Exception:
                     pass
-        await interaction.followup.send("🔒 Заказ закрыт. Канал будет удалён через 24 часа.", ephemeral=False)
+        await interaction.followup.send("🔒 Заказ закрыт. Канал удалён через 24 часа.")
 
 # ================= СИСТЕМА ОТЗЫВОВ =================
 class ReviewModal(discord.ui.Modal, title="Оставить отзыв"):

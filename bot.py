@@ -1657,10 +1657,53 @@ class LotsMenuView(discord.ui.View):
                 if not seller_member:
                     await i.followup.send(f"❌ Пользователь с ID {seller_id} не найден на сервере", ephemeral=True)
                     return
+
+                class ProductSelectView(discord.ui.View):
+    def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats):
+        super().__init__(timeout=60)
+        self.d = (lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats)
+        select = discord.ui.Select(
+            placeholder="🎮 Продукт",
+            options=[
+                discord.SelectOption(label="АХК Рыбалка", value="rybalka", emoji="🎣"),
+                discord.SelectOption(label="АХК Грузчик", value="gruzchik", emoji="📦"),
+                discord.SelectOption(label="Без ключа", value="none", emoji="❌"),
+            ]
+        )
+        select.callback = self.product_callback
+        self.add_item(select)
+
+    async def product_callback(self, si: discord.Interaction):
+        self.product_code = si.data['values'][0]
+        if self.product_code == 'none':
+            view = CategorySelectView(*self.d, product_code='none', duration='30d')
+            await si.response.edit_message(content="📁 **Выберите категорию:**", view=view)
+        else:
+            dur_select = discord.ui.Select(
+                placeholder="⏳ Тариф",
+                options=[
+                    discord.SelectOption(label="1 день", value="1d"),
+                    discord.SelectOption(label="7 дней", value="7d"),
+                    discord.SelectOption(label="30 дней", value="30d"),
+                    discord.SelectOption(label="Lifetime", value="lifetime"),
+                ]
+            )
+            view = discord.ui.View(timeout=60)
+            dur_select.callback = lambda i: self.duration_callback(i, dur_select)
+            view.add_item(dur_select)
+            await si.response.edit_message(content="⏳ **Выберите тариф:**", view=view)
+
+    async def duration_callback(self, si: discord.Interaction, select):
+        duration = select.values[0]
+        view = CategorySelectView(*self.d, product_code=self.product_code, duration=duration)
+        await si.response.edit_message(content="📁 **Выберите категорию:**", view=view)
                 
                 class CategorySelectView(discord.ui.View):
-                    def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats):
+                    def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats,
+                                 product_code='none', duration='30d'):
                         super().__init__(timeout=60)
+                        self.product_code = product_code
+                        self.duration = duration
                         self.lot_name = lot_name
                         self.lot_price = lot_price
                         self.lot_full = lot_full
@@ -1676,16 +1719,14 @@ class LotsMenuView(discord.ui.View):
                         select.callback = self.select_callback
                         self.add_item(select)
                     
-                    async def select_callback(self, select_interaction: discord.Interaction):
+                    async def select_callback(self, select_interaction):
                         cat_id = int(select_interaction.data['values'][0])
                         lot_id = await db.add_lot(
-                            name=self.lot_name,
-                            price=self.lot_price,
-                            short_description="",
-                            full_description=self.lot_full or "",
-                            seller_id=self.seller_id_val,
-                            category_id=cat_id,
-                            stock=self.lot_stock
+                            name=self.lot_name, price=self.lot_price,
+                            short_description="", full_description=self.lot_full or "",
+                            seller_id=self.seller_id_val, category_id=cat_id,
+                            stock=self.lot_stock, product_code=self.product_code,
+                            duration=self.duration
                         )
                         await db.refresh_cache()
                         seller_mention = f"<@{self.seller_id_val}>"

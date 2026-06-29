@@ -1660,44 +1660,44 @@ class LotsMenuView(discord.ui.View):
                     return
 
                 class ProductSelectView(discord.ui.View):
-    def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats):
-        super().__init__(timeout=60)
-        self.d = (lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats)
-        select = discord.ui.Select(
-            placeholder="🎮 Продукт",
-            options=[
-                discord.SelectOption(label="АХК Рыбалка", value="rybalka", emoji="🎣"),
-                discord.SelectOption(label="АХК Грузчик", value="gruzchik", emoji="📦"),
-                discord.SelectOption(label="Без ключа", value="none", emoji="❌"),
-            ]
-        )
-        select.callback = self.product_callback
-        self.add_item(select)
-
-    async def product_callback(self, si: discord.Interaction):
-        self.product_code = si.data['values'][0]
-        if self.product_code == 'none':
-            view = CategorySelectView(*self.d, product_code='none', duration='30d')
-            await si.response.edit_message(content="📁 **Выберите категорию:**", view=view)
-        else:
-            dur_select = discord.ui.Select(
-                placeholder="⏳ Тариф",
-                options=[
-                    discord.SelectOption(label="1 день", value="1d"),
-                    discord.SelectOption(label="7 дней", value="7d"),
-                    discord.SelectOption(label="30 дней", value="30d"),
-                    discord.SelectOption(label="Lifetime", value="lifetime"),
-                ]
-            )
-            view = discord.ui.View(timeout=60)
-            dur_select.callback = lambda i: self.duration_callback(i, dur_select)
-            view.add_item(dur_select)
-            await si.response.edit_message(content="⏳ **Выберите тариф:**", view=view)
-
-    async def duration_callback(self, si: discord.Interaction, select):
-        duration = select.values[0]
-        view = CategorySelectView(*self.d, product_code=self.product_code, duration=duration)
-        await si.response.edit_message(content="📁 **Выберите категорию:**", view=view)
+                                    def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats):
+                                        super().__init__(timeout=60)
+                                        self.d = (lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats)
+                                        select = discord.ui.Select(
+                                            placeholder="🎮 Продукт",
+                                            options=[
+                                                discord.SelectOption(label="АХК Рыбалка", value="rybalka", emoji="🎣"),
+                                                discord.SelectOption(label="АХК Грузчик", value="gruzchik", emoji="📦"),
+                                                discord.SelectOption(label="Без ключа", value="none", emoji="❌"),
+                                            ]
+                                        )
+                                        select.callback = self.product_callback
+                                        self.add_item(select)
+                                
+                                    async def product_callback(self, si: discord.Interaction):
+                                        self.product_code = si.data['values'][0]
+                                        if self.product_code == 'none':
+                                            view = CategorySelectView(*self.d, product_code='none', duration='30d')
+                                            await si.response.edit_message(content="📁 **Выберите категорию:**", view=view)
+                                        else:
+                                            dur_select = discord.ui.Select(
+                                                placeholder="⏳ Тариф",
+                                                options=[
+                                                    discord.SelectOption(label="1 день", value="1d"),
+                                                    discord.SelectOption(label="7 дней", value="7d"),
+                                                    discord.SelectOption(label="30 дней", value="30d"),
+                                                    discord.SelectOption(label="Lifetime", value="lifetime"),
+                                                ]
+                                            )
+                                            view = discord.ui.View(timeout=60)
+                                            dur_select.callback = lambda i: self.duration_callback(i, dur_select)
+                                            view.add_item(dur_select)
+                                            await si.response.edit_message(content="⏳ **Выберите тариф:**", view=view)
+                                
+                                    async def duration_callback(self, si: discord.Interaction, select):
+                                        duration = select.values[0]
+                                        view = CategorySelectView(*self.d, product_code=self.product_code, duration=duration)
+                                        await si.response.edit_message(content="📁 **Выберите категорию:**", view=view)
                 
                 class CategorySelectView(discord.ui.View):
                     def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats,

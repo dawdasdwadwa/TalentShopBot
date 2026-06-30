@@ -32,6 +32,17 @@ warnings_cache: Dict[int, dict] = {}
 currency_rates_cache: Dict[str, float] = {}
 
 # ================= DATACLASSES =================
+
+@dataclass
+class Category:
+    id: int
+    name: str
+    emoji: str = "📁"
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    parent_id: Optional[int] = None
+    lots: List[int] = field(default_factory=list)
+
 @dataclass
 class Lot:
     lot_id: int

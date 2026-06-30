@@ -1,4 +1,3 @@
-
 import discord
 from discord.ui import TextInput, Modal
 from discord.ext import commands, tasks
@@ -727,6 +726,8 @@ class ShopView(discord.ui.View):
         # Используем новую функцию — но для View нужен синхронный доступ через кэш
         options = []
         for cat in db.categories_cache.values():
+            if getattr(cat, 'parent_id', None) is not None:
+                continue
             options.append(discord.SelectOption(
                 label=cat.name, value=str(cat.id), emoji=cat.emoji,
                 description=f"Товаров: {len(cat.lots)}"
@@ -745,15 +746,13 @@ class ShopView(discord.ui.View):
     async def category_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         category_id = int(interaction.data['values'][0])
-        # Проверяем есть ли подкатегории
         subcats = await db.get_subcategories(category_id)
         if subcats:
-            # Показываем подкатегории
             view = SubCategoryView(subcats)
-            embed = discord.Embed(title=f"📁 Выберите подкатегорию", color=discord.Color.blue())
+            category = await db.get_category(category_id)
+            embed = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         else:
-            # Показываем товары
             lots_in_category = await db.get_lots_by_category_full(category_id)
             if not lots_in_category:
                 await interaction.followup.send("В этой категории нет товаров.", ephemeral=True)
@@ -781,18 +780,17 @@ class SubCategoryView(discord.ui.View):
     async def subcat_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         category_id = int(interaction.data['values'][0])
-        # Проверяем ещё один уровень вложенности
+        category = await db.get_category(category_id)
         subcats = await db.get_subcategories(category_id)
         if subcats:
             view = SubCategoryView(subcats)
-            embed = discord.Embed(title="📁 Выберите подкатегорию", color=discord.Color.blue())
+            embed = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         else:
             lots_in_category = await db.get_lots_by_category_full(category_id)
             if not lots_in_category:
                 await interaction.followup.send("В этой категории нет товаров.", ephemeral=True)
                 return
-            category = await db.get_category(category_id)
             embed = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
             for lot in lots_in_category:
                 stock_text = "♾️" if lot.stock == -1 else (f"📦 {lot.stock}" if lot.stock > 0 else "❌")
@@ -1215,6 +1213,8 @@ async def owner_only(interaction: discord.Interaction) -> bool:
         return False
     return True
 
+
+
 @bot.tree.command(name='setup_verify', description='[OWNER] Пересоздать панель верификации')
 async def setup_verify_cmd(interaction: discord.Interaction):
     if not await owner_only(interaction):
@@ -1269,14 +1269,15 @@ async def restore_backup(interaction: discord.Interaction):
         await interaction.followup.send("❌ Не удалось найти бэкап в канале.", ephemeral=True)
 
 @bot.tree.command(name='add_category', description='[OWNER] Добавить категорию')
-@app_commands.describe(name="Название", emoji="Эмодзи")
-async def add_category_cmd(interaction: discord.Interaction, name: str, emoji: str = "📁"):
+@app_commands.describe(name="Название", emoji="Эмодзи", parent_id="ID родительской категории (необязательно)")
+async def add_category_cmd(interaction: discord.Interaction, name: str, emoji: str = "📁", parent_id: int = None):
     if not await owner_only(interaction):
         return
     await interaction.response.defer(ephemeral=True)
-    cat_id = await db.add_category(name=name, emoji=emoji)
+    cat_id = await db.add_category(name=name, emoji=emoji, parent_id=parent_id)
     await db.refresh_cache()
-    await interaction.followup.send(f"✅ Категория `{emoji} {name}` добавлена (ID: {cat_id})", ephemeral=True)
+    parent_str = f" (подкатегория {parent_id})" if parent_id else ""
+    await interaction.followup.send(f"✅ Категория `{emoji} {name}` добавлена (ID: {cat_id}){parent_str}", ephemeral=True)
     await send_or_update_shop(interaction.guild)
 
 @bot.tree.command(name='list_lots', description='[OWNER] Обновить магазин')
@@ -1535,12 +1536,25 @@ class CategoriesMenuView(discord.ui.View):
         class AddCategoryModal(discord.ui.Modal, title="Добавить категорию"):
             name = discord.ui.TextInput(label="Название", placeholder="Введите название...", required=True)
             emoji = discord.ui.TextInput(label="Эмодзи", placeholder="📁", required=False, default="📁")
+            parent_id = discord.ui.TextInput(label="ID родителя (пусто = корневая)", placeholder="Например: 3", required=False)
             
             async def on_submit(self, i: discord.Interaction):
                 await i.response.defer(ephemeral=True)
-                cat_id = await db.add_category(name=self.name.value, emoji=self.emoji.value)
+                pid = None
+                if self.parent_id.value.strip():
+                    try:
+                        pid = int(self.parent_id.value.strip())
+                        parent = await db.get_category(pid)
+                        if not parent:
+                            await i.followup.send(f"❌ Категория с ID {pid} не найдена", ephemeral=True)
+                            return
+                    except ValueError:
+                        await i.followup.send("❌ ID должен быть числом", ephemeral=True)
+                        return
+                cat_id = await db.add_category(name=self.name.value, emoji=self.emoji.value or "📁", parent_id=pid)
                 await db.refresh_cache()
-                await i.followup.send(f"✅ Категория `{self.emoji.value} {self.name.value}` добавлена (ID: {cat_id})", ephemeral=True)
+                parent_str = f" → подкатегория {pid}" if pid else " (корневая)"
+                await i.followup.send(f"✅ `{self.emoji.value or '📁'} {self.name.value}` добавлена (ID: {cat_id}){parent_str}", ephemeral=True)
                 config = get_config(i.guild_id)
                 if config and config.get("shop_channel"):
                     await send_or_update_shop(i.guild)

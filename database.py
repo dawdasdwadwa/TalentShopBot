@@ -558,12 +558,12 @@ async def get_category(category_id: int) -> Optional[Category]:
     categories_cache[category_id] = result
     return result
 
-async def add_category(name: str, emoji: str = "📁", description: str = None, image_url: str = None) -> int:
+async def add_category(name: str, emoji: str = "📁", description: str = None, image_url: str = None, parent_id: int = None) -> int:
     global categories_cache
     async with transaction():
         cursor = await _execute_no_lock(
-            'INSERT INTO categories (name, emoji, description, image_url) VALUES (?, ?, ?, ?)',
-            (name, emoji, description, image_url)
+            'INSERT INTO categories (name, emoji, description, image_url, parent_id) VALUES (?, ?, ?, ?, ?)',
+            (name, emoji, description, image_url, parent_id)
         )
         cat_id = cursor.lastrowid
         categories_cache = {}

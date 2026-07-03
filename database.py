@@ -32,17 +32,6 @@ warnings_cache: Dict[int, dict] = {}
 currency_rates_cache: Dict[str, float] = {}
 
 # ================= DATACLASSES =================
-
-@dataclass
-class Category:
-    id: int
-    name: str
-    emoji: str = "📁"
-    description: Optional[str] = None
-    image_url: Optional[str] = None
-    parent_id: Optional[int] = None
-    lots: List[int] = field(default_factory=list)
-
 @dataclass
 class Lot:
     lot_id: int
@@ -66,6 +55,7 @@ class Category:
     emoji: str = "📁"
     description: Optional[str] = None
     image_url: Optional[str] = None
+    parent_id: Optional[int] = None
     lots: List[int] = field(default_factory=list)
 
 @dataclass
@@ -545,6 +535,7 @@ async def get_all_categories() -> Dict[int, Category]:
         row['id']: Category(
             id=row['id'], name=row['name'], emoji=row['emoji'] or "📁",
             description=row['description'], image_url=row['image_url'],
+            parent_id=row['parent_id'],
             lots=lots_by_category.get(row['id'], [])
         )
         for row in cat_rows
@@ -564,6 +555,7 @@ async def get_category(category_id: int) -> Optional[Category]:
     result = Category(
         id=row['id'], name=row['name'], emoji=row['emoji'] or "📁",
         description=row['description'], image_url=row['image_url'],
+        parent_id=row['parent_id'],
         lots=[r['id'] for r in lots_rows]
     )
     categories_cache[category_id] = result
@@ -735,6 +727,7 @@ async def get_subcategories(parent_id: Optional[int] = None) -> List[Category]:
         result.append(Category(
             id=row['id'], name=row['name'], emoji=row['emoji'] or '📁',
             description=row['description'], image_url=row['image_url'],
+            parent_id=row['parent_id'],
             lots=[r['id'] for r in lots_rows]
         ))
     return result

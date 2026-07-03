@@ -256,24 +256,16 @@ async def _fetch_channel_safe(channel_id: int, retries: int = 5) -> Optional[dis
 async def rotate_backup_channel(channel):
     try:
         messages = []
-        async for msg in channel.history(limit=500):
+        async for msg in channel.history(limit=100):
             if msg.author == bot.user:
                 messages.append(msg)
         if len(messages) <= BACKUP_MAX_MESSAGES:
             return
         to_delete = messages[BACKUP_MAX_MESSAGES:]
-        # bulk purge (сообщения < 14 дней) — иначе по одному
         bulk = [m for m in to_delete if (datetime.now(timezone.utc) - m.created_at).days < 14]
-        old  = [m for m in to_delete if m not in bulk]
         if bulk:
             await channel.purge(limit=None, check=lambda m: m in bulk)
-        for m in old:
-            try:
-                await m.delete()
-                await asyncio.sleep(0.5)
-            except Exception:
-                pass
-        logger.info(f"✅ Ротация бэкапов: удалено {len(to_delete)}")
+        logger.info(f"✅ Ротация бэкапов: удалено {len(bulk)}")
     except Exception as e:
         logger.error(f"Ошибка ротации бэкапов: {e}")
 
@@ -302,6 +294,7 @@ async def save_backup(reason: str = "manual"):
 
 async def auto_backup_task():
     await bot.wait_until_ready()
+    await asyncio.sleep(43200)
     while not bot.is_closed():
         try:
             await save_backup("auto (12 hours)")
@@ -333,7 +326,6 @@ async def _do_shop_update(guild: discord.Guild):
 async def send_or_update_shop(guild: discord.Guild):
     async with _shop_update_lock:
         await _do_shop_update(guild)
-        await save_backup("shop_update")
 
 # ================= ПОИСК В МАГАЗИНЕ =================
 class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
@@ -1736,7 +1728,7 @@ async def _startup_background():
     logger.info("🔥 _startup_background() начал работу...")
     await _safe_task(db.restore_from_backup_channel(BACKUP_CHANNEL_ID, bot), "restore_backup")
     await asyncio.gather(
-        _safe_task(setup_panels(),      "setup_panels"),
+        _safe_task(setup_panels(), "setup_panels"),
         _safe_task(setup_admin_panel(), "setup_admin_panel"),
     )
     logger.info("✅ _startup_background() завершён!")

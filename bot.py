@@ -649,6 +649,17 @@ class LotActionView(discord.ui.View):
                 seller_mention = self.seller.mention if self.seller else "Продавец"
                 await ticket_channel.send(content=seller_mention, embed=embed)
                 await ticket_channel.send(f"{interaction.user.mention}, ожидайте ответа продавца.")
+                if self.seller:
+                    try:
+                        await self.seller.send(
+                            f"🛒 **Новый заказ!**\n"
+                            f"👤 Покупатель: {interaction.user.name} (`{interaction.user.id}`)\n"
+                            f"📦 Товар: **{self.lot.name}**\n"
+                            f"💰 Цена: {self.lot.price}\n"
+                            f"📝 Канал: {ticket_channel.mention}"
+                        )
+                    except discord.Forbidden:
+                        pass
 
                 if self.lot.role_id:
                     role = interaction.guild.get_role(self.lot.role_id)
@@ -661,6 +672,36 @@ class LotActionView(discord.ui.View):
 
                 price_num = await parse_price_rub(self.lot.price)
                 await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=int(price_num) if price_num else 0)
+
+                # Роль Покупатель
+                config = get_config(interaction.guild_id)
+                buyer_role_id = config["roles"].get("buyer") if config else None
+                if buyer_role_id:
+                    buyer_role = interaction.guild.get_role(buyer_role_id)
+                    if buyer_role and buyer_role not in interaction.user.roles:
+                        try:
+                            await interaction.user.add_roles(buyer_role)
+                        except Exception:
+                            pass
+
+                # Лог покупки
+                log_ch_id = config.get("log_channel") if config else None
+                if log_ch_id:
+                    log_ch = interaction.guild.get_channel(log_ch_id)
+                    if log_ch:
+                        log_embed = discord.Embed(
+                            title="🛒 Новая покупка",
+                            color=discord.Color.green(),
+                            timestamp=datetime.now(timezone.utc)
+                        )
+                        log_embed.add_field(name="👤 Покупатель", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=True)
+                        log_embed.add_field(name="📦 Товар", value=self.lot.name, inline=True)
+                        log_embed.add_field(name="💰 Цена", value=self.lot.price, inline=True)
+                        log_embed.add_field(name="📝 Канал", value=ticket_channel.mention, inline=False)
+                        try:
+                            await log_ch.send(embed=log_embed)
+                        except Exception:
+                            pass
 
                 ticket_view = OrderCloseView(
                     ticket_channel.id, interaction.user.id, self.seller,
@@ -942,6 +983,89 @@ async def add_category_cmd(interaction: discord.Interaction, name: str, emoji: s
     await interaction.followup.send(f"✅ Категория `{emoji} {name}` добавлена (ID: {cat_id}){parent_str}", ephemeral=True)
     await send_or_update_shop(interaction.guild)
 
+@bot.tree.command(name='stock', description='[OWNER] Изменить остаток товара')
+async def stock_cmd(interaction: discord.Interaction):
+    if not await owner_only(interaction):
+        return
+    await db.refresh_cache()
+    lots = db.lots_cache
+    if not lots:
+        await interaction.response.send_message("❌ Нет товаров", ephemeral=True)
+        return
+
+    class StockSelectView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            options = [discord.SelectOption(label=f"{lot.name} (ID:{lot.lot_id})"[:100], value=str(lot.lot_id)) for lot in list(lots.values())[:25]]
+            select = discord.ui.Select(placeholder="Выберите товар", options=options)
+            select.callback = self.select_callback
+            self.add_item(select)
+
+        async def select_callback(self, si: discord.Interaction):
+            lot_id = int(si.data['values'][0])
+            lot = await db.get_lot(lot_id)
+
+            class StockModal(discord.ui.Modal, title=f"Остаток: {lot.name[:40]}"):
+                new_stock = discord.ui.TextInput(label="Новый остаток (-1 = безлимит)", placeholder=str(lot.stock), required=True)
+
+                async def on_submit(self, i: discord.Interaction):
+                    await i.response.defer(ephemeral=True)
+                    try:
+                        val = int(self.new_stock.value)
+                    except ValueError:
+                        await i.followup.send("❌ Введите число", ephemeral=True)
+                        return
+                    await db.execute('UPDATE lots SET stock = ? WHERE id = ?', (val, lot_id))
+                    db.lots_cache = {}
+                    await db.refresh_cache()
+                    stock_text = "♾️ Бесконечно" if val == -1 else str(val)
+                    await i.followup.send(f"✅ **{lot.name}** → остаток: {stock_text}", ephemeral=True)
+                    await send_or_update_shop(i.guild)
+
+            await si.response.send_modal(StockModal())
+
+    await interaction.response.send_message("📦 Выберите товар:", view=StockSelectView(), ephemeral=True)
+
+
+@bot.tree.command(name='lot_edit', description='[OWNER] Редактировать товар')
+async def lot_edit_cmd(interaction: discord.Interaction):
+    if not await owner_only(interaction):
+        return
+    await db.refresh_cache()
+    lots = db.lots_cache
+    if not lots:
+        await interaction.response.send_message("❌ Нет товаров", ephemeral=True)
+        return
+
+    class LotEditSelectView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            options = [discord.SelectOption(label=f"{lot.name} (ID:{lot.lot_id})"[:100], value=str(lot.lot_id)) for lot in list(lots.values())[:25]]
+            select = discord.ui.Select(placeholder="Выберите товар", options=options)
+            select.callback = self.select_callback
+            self.add_item(select)
+
+        async def select_callback(self, si: discord.Interaction):
+            lot_id = int(si.data['values'][0])
+            lot = await db.get_lot(lot_id)
+
+            class LotEditModal(discord.ui.Modal, title=f"Редактировать: {lot.name[:35]}"):
+                name      = discord.ui.TextInput(label="Название", default=lot.name, required=True, max_length=100)
+                price     = discord.ui.TextInput(label="Цена", default=lot.price, required=True, max_length=50)
+                full_desc = discord.ui.TextInput(label="Описание", default=lot.full_description[:2000] if lot.full_description else "", style=discord.TextStyle.paragraph, required=False, max_length=2000)
+
+                async def on_submit(self, i: discord.Interaction):
+                    await i.response.defer(ephemeral=True)
+                    await db.update_lot(lot_id, name=self.name.value, price=self.price.value, full_description=self.full_desc.value)
+                    await db.refresh_cache()
+                    await i.followup.send(f"✅ **{self.name.value}** обновлён", ephemeral=True)
+                    await send_or_update_shop(i.guild)
+
+            await si.response.send_modal(LotEditModal())
+
+    await interaction.response.send_message("✏️ Выберите товар:", view=LotEditSelectView(), ephemeral=True)
+
+
 @bot.tree.command(name='list_lots', description='[OWNER] Обновить магазин')
 async def list_lots(interaction: discord.Interaction):
     if not await owner_only(interaction):
@@ -975,6 +1099,42 @@ async def auto_cleanup_tickets():
                             await vc.delete()
                         except Exception:
                             pass
+                await db.delete_ticket_record(ticket['channel_id'])
+        except Exception:
+            pass
+
+        # Автозакрытие неактивных тикетов (7 дней без активности)
+        try:
+            inactive_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            inactive = await db.fetchall(
+                'SELECT * FROM tickets WHERE status = "open" AND last_activity <= ?',
+                (inactive_cutoff,)
+            )
+            for ticket in inactive:
+                guild = bot.get_guild(ticket['guild_id'])
+                if not guild:
+                    continue
+                channel = guild.get_channel(ticket['channel_id'])
+                if channel:
+                    try:
+                        embed = discord.Embed(
+                            title="🔒 Тикет автоматически закрыт",
+                            description="Закрыт из-за отсутствия активности 7 дней.",
+                            color=discord.Color.dark_red()
+                        )
+                        await channel.send(embed=embed)
+                        await asyncio.sleep(2)
+                        await channel.delete()
+                    except Exception:
+                        pass
+                if ticket.get('voice_channel_id'):
+                    vc = guild.get_channel(ticket['voice_channel_id'])
+                    if vc:
+                        try:
+                            await vc.delete()
+                        except Exception:
+                            pass
+                await db.close_ticket(ticket['channel_id'])
                 await db.delete_ticket_record(ticket['channel_id'])
         except Exception:
             pass
@@ -1039,6 +1199,20 @@ async def _assign_unverified_roles():
                 await asyncio.sleep(0.5)
 
 # ================= АДМИН ПАНЕЛЬ =================
+
+def _admin_main_embed():
+    e = discord.Embed(title="● Админ панель", description="Выберите раздел", color=discord.Color.light_gray())
+    e.add_field(name="● Товары",    value="Категории, подкатегории, товары", inline=False)
+    e.add_field(name="● Настройки", value="Статистика, магазин, бэкап",      inline=False)
+    return e
+
+def _shop_menu_embed():
+    e = discord.Embed(title="● Товары", color=discord.Color.light_gray())
+    e.add_field(name="● Категории",    value="Корневые категории",  inline=False)
+    e.add_field(name="● Подкатегории", value="Дочерние категории",  inline=False)
+    e.add_field(name="● Товары",       value="Лоты магазина",       inline=False)
+    return e
+
 class AdminPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -1048,85 +1222,90 @@ class AdminPanelView(discord.ui.View):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
-        embed = discord.Embed(title="● **Админ панель**", description="Выберите раздел для управления", color=discord.Color.light_gray())
-        embed.add_field(name="● **Категории**", value="Управление категориями товаров", inline=False)
-        embed.add_field(name="● **Товары**",    value="Управление товарами и ассортиментом", inline=False)
-        embed.add_field(name="● **Настройки**", value="Статистика и резервное копирование", inline=False)
-        embed.set_footer(text="Панель управления")
-        await interaction.response.edit_message(embed=embed, view=AdminMainMenu())
+        await interaction.response.edit_message(embed=_admin_main_embed(), view=AdminMainMenu())
 
 class AdminMainMenu(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Категории", style=discord.ButtonStyle.secondary, custom_id="admin_cats_menu", row=0)
-    async def categories_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Управление категориями**", color=discord.Color.light_gray())
-        embed.add_field(name="● **Добавить категорию**", value="Создать новую категорию", inline=False)
-        embed.add_field(name="● **Удалить категорию**",  value="Удалить существующую категорию", inline=False)
-        embed.add_field(name="● **Список категорий**",   value="Показать все категории с ID", inline=False)
-        await interaction.response.edit_message(embed=embed, view=CategoriesMenuView())
-
-    @discord.ui.button(label="Товары", style=discord.ButtonStyle.secondary, custom_id="admin_lots_menu", row=0)
-    async def lots_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Управление товарами**", color=discord.Color.light_gray())
-        embed.add_field(name="● **Добавить товар**", value="Создать новый товар", inline=False)
-        embed.add_field(name="● **Удалить товар**",  value="Удалить существующий товар", inline=False)
-        embed.add_field(name="● **Список товаров**", value="Показать все товары с ID", inline=False)
-        await interaction.response.edit_message(embed=embed, view=LotsMenuView())
+    @discord.ui.button(label="Товары", style=discord.ButtonStyle.secondary, custom_id="admin_shop_menu", row=0)
+    async def shop_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_shop_menu_embed(), view=ShopAdminMenu())
 
     @discord.ui.button(label="Настройки", style=discord.ButtonStyle.secondary, custom_id="admin_settings_menu", row=0)
     async def settings_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Настройки и статистика**", color=discord.Color.light_gray())
-        embed.add_field(name="● **Статистика**",      value="Показать статистику магазина", inline=False)
-        embed.add_field(name="● **Обновить магазин**", value="Принудительное обновление", inline=False)
-        embed.add_field(name="● **Бэкап**",            value="Создать резервную копию", inline=False)
-        await interaction.response.edit_message(embed=embed, view=SettingsMenuView())
+        e = discord.Embed(title="● Настройки", color=discord.Color.light_gray())
+        e.add_field(name="● Статистика",       value="Показать статистику",      inline=False)
+        e.add_field(name="● Обновить магазин", value="Принудительное обновление", inline=False)
+        e.add_field(name="● Бэкап",            value="Создать резервную копию",   inline=False)
+        await interaction.response.edit_message(embed=e, view=SettingsMenuView())
 
-    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary, custom_id="admin_back_main", row=1)
+    @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="admin_back_main", row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Админ панель**", description="Выберите раздел", color=discord.Color.light_gray())
-        await interaction.response.edit_message(embed=embed, view=AdminPanelView())
+        await interaction.response.edit_message(embed=_admin_main_embed(), view=AdminPanelView())
 
+# ── Товары → Категории / Подкатегории / Товары ──
+class ShopAdminMenu(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Категории", style=discord.ButtonStyle.secondary, custom_id="sa_cats", row=0)
+    async def cats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        e = discord.Embed(title="● Категории", color=discord.Color.light_gray())
+        e.add_field(name="➕ Добавить", value="Создать корневую категорию", inline=False)
+        e.add_field(name="🗑️ Удалить",  value="Удалить категорию по ID",    inline=False)
+        e.add_field(name="📋 Список",   value="Показать корневые категории", inline=False)
+        await interaction.response.edit_message(embed=e, view=CategoriesMenuView())
+
+    @discord.ui.button(label="Подкатегории", style=discord.ButtonStyle.secondary, custom_id="sa_subcats", row=0)
+    async def subcats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        e = discord.Embed(title="● Подкатегории", color=discord.Color.light_gray())
+        e.add_field(name="➕ Добавить", value="Создать подкатегорию",         inline=False)
+        e.add_field(name="🗑️ Удалить",  value="Удалить подкатегорию по ID",   inline=False)
+        e.add_field(name="📋 Список",   value="Показать все подкатегории",     inline=False)
+        await interaction.response.edit_message(embed=e, view=SubCategoriesMenuView())
+
+    @discord.ui.button(label="Товары", style=discord.ButtonStyle.secondary, custom_id="sa_lots", row=0)
+    async def lots_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        e = discord.Embed(title="● Товары", color=discord.Color.light_gray())
+        e.add_field(name="➕ Добавить", value="Создать новый товар",    inline=False)
+        e.add_field(name="🗑️ Удалить",  value="Удалить товар",          inline=False)
+        e.add_field(name="📋 Список",   value="Показать все товары",     inline=False)
+        await interaction.response.edit_message(embed=e, view=LotsMenuView())
+
+    @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="sa_back", row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_admin_main_embed(), view=AdminMainMenu())
+
+# ── Категории ──
 class CategoriesMenuView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="➕ Добавить категорию", style=discord.ButtonStyle.success, custom_id="cat_add", row=0)
-    async def add_category_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="➕ Добавить", style=discord.ButtonStyle.success, custom_id="cat_add", row=0)
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
 
         class AddCategoryModal(discord.ui.Modal, title="Добавить категорию"):
-            name      = discord.ui.TextInput(label="Название", placeholder="Введите название...", required=True)
-            emoji     = discord.ui.TextInput(label="Эмодзи", placeholder="📁", required=False, default="📁")
-            parent_id = discord.ui.TextInput(label="ID родителя (пусто = корневая)", placeholder="Например: 3", required=False)
+            name  = discord.ui.TextInput(label="Название", placeholder="Например: Боты", required=True)
+            emoji = discord.ui.TextInput(label="Эмодзи (стандартный или ID кастомного)", placeholder="📁 или 1234567890", required=False, default="📁")
 
             async def on_submit(self, i: discord.Interaction):
                 await i.response.defer(ephemeral=True)
-                pid = None
-                if self.parent_id.value.strip():
-                    try:
-                        pid = int(self.parent_id.value.strip())
-                        if not await db.get_category(pid):
-                            await i.followup.send(f"❌ Категория с ID {pid} не найдена", ephemeral=True)
-                            return
-                    except ValueError:
-                        await i.followup.send("❌ ID должен быть числом", ephemeral=True)
-                        return
-                cat_id = await db.add_category(name=self.name.value, emoji=self.emoji.value or "📁", parent_id=pid)
+                emoji_val = self.emoji.value.strip() or "📁"
+                cat_id = await db.add_category(name=self.name.value, emoji=emoji_val, parent_id=None)
                 await db.refresh_cache()
-                parent_str = f" → подкатегория {pid}" if pid else " (корневая)"
-                await i.followup.send(f"✅ `{self.emoji.value or '📁'} {self.name.value}` добавлена (ID: {cat_id}){parent_str}", ephemeral=True)
+                await i.followup.send(f"✅ Категория `{self.name.value}` добавлена (ID: `{cat_id}`)", ephemeral=True)
                 config = get_config(i.guild_id)
                 if config and config.get("shop_channel"):
                     await send_or_update_shop(i.guild)
 
         await interaction.response.send_modal(AddCategoryModal())
 
-    @discord.ui.button(label="🗑️ Удалить категорию", style=discord.ButtonStyle.danger, custom_id="cat_del", row=0)
-    async def delete_category_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🗑️ Удалить", style=discord.ButtonStyle.danger, custom_id="cat_del", row=0)
+    async def del_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
@@ -1147,43 +1326,48 @@ class CategoriesMenuView(discord.ui.View):
                     return
                 await db.delete_category(cid)
                 await db.refresh_cache()
-                await i.followup.send(f"✅ Категория `{category.emoji} {category.name}` удалена", ephemeral=True)
+                await i.followup.send(f"✅ `{category.name}` удалена", ephemeral=True)
                 config = get_config(i.guild_id)
                 if config and config.get("shop_channel"):
                     await send_or_update_shop(i.guild)
 
         await interaction.response.send_modal(DeleteCategoryModal())
 
-    @discord.ui.button(label="📋 Список категорий", style=discord.ButtonStyle.primary, custom_id="cat_list", row=0)
-    async def list_categories_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="📋 Список", style=discord.ButtonStyle.primary, custom_id="cat_list", row=0)
+    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         await db.refresh_cache()
-        categories = db.categories_cache
-        if not categories:
-            await interaction.followup.send("📭 Нет категорий", ephemeral=True)
+        # только корневые
+        root_cats = [c for c in db.categories_cache.values() if not getattr(c, 'parent_id', None)]
+        if not root_cats:
+            await interaction.followup.send("📭 Нет корневых категорий", ephemeral=True)
             return
-        embed = discord.Embed(title="📁 Список категорий", color=discord.Color.blue())
-        for cat in categories.values():
-            pid_str = f" (дочерняя → {cat.parent_id})" if getattr(cat, 'parent_id', None) else ""
-            embed.add_field(name=f"{cat.emoji} {cat.name}{pid_str}", value=f"**ID:** `{cat.id}`\n**Товаров:** {len(cat.lots)}", inline=False)
+        embed = discord.Embed(title="📁 Корневые категории", color=discord.Color.blue())
+        for cat in root_cats:
+            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Товаров:** {len(cat.lots)}", inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="➕ Добавить подкатегорию", style=discord.ButtonStyle.success, custom_id="subcat_add", row=1)
-    async def add_subcategory_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="cat_back", row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_shop_menu_embed(), view=ShopAdminMenu())
+
+# ── Подкатегории ──
+class SubCategoriesMenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="➕ Добавить", style=discord.ButtonStyle.success, custom_id="subcat_add", row=0)
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_owner(interaction):
             await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
             return
-        await db.refresh_cache()
-        if not db.categories_cache:
-            await interaction.response.send_message("❌ Сначала создайте категорию", ephemeral=True)
-            return
 
         class AddSubcategoryModal(discord.ui.Modal, title="Добавить подкатегорию"):
-            name      = discord.ui.TextInput(label="Название", placeholder="Введите название...", required=True)
-            emoji     = discord.ui.TextInput(label="Эмодзи", placeholder="📂", required=False, default="📂")
+            name      = discord.ui.TextInput(label="Название", placeholder="Например: Рыбалка", required=True)
+            emoji     = discord.ui.TextInput(label="Эмодзи (стандартный или ID кастомного)", placeholder="📂 или 1234567890", required=False, default="📂")
             parent_id = discord.ui.TextInput(label="ID родительской категории", placeholder="Например: 3", required=True)
 
             async def on_submit(self, i: discord.Interaction):
@@ -1197,11 +1381,11 @@ class CategoriesMenuView(discord.ui.View):
                 if not parent:
                     await i.followup.send(f"❌ Категория с ID `{pid}` не найдена", ephemeral=True)
                     return
-                cat_id = await db.add_category(name=self.name.value, emoji=self.emoji.value or "📂", parent_id=pid)
+                emoji_val = self.emoji.value.strip() or "📂"
+                cat_id = await db.add_category(name=self.name.value, emoji=emoji_val, parent_id=pid)
                 await db.refresh_cache()
                 await i.followup.send(
-                    f"✅ Подкатегория `{self.emoji.value or '📂'} {self.name.value}` добавлена "
-                    f"(ID: `{cat_id}`) → в `{parent.emoji} {parent.name}` (ID: `{pid}`)",
+                    f"✅ Подкатегория `{self.name.value}` добавлена (ID: `{cat_id}`) → `{parent.name}` (ID: `{pid}`)",
                     ephemeral=True
                 )
                 config = get_config(i.guild_id)
@@ -1210,14 +1394,61 @@ class CategoriesMenuView(discord.ui.View):
 
         await interaction.response.send_modal(AddSubcategoryModal())
 
-    @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="cat_back", row=2)
-    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Админ панель**", description="Выберите раздел для управления", color=discord.Color.light_gray())
-        embed.add_field(name="● **Категории**", value="Управление категориями товаров", inline=False)
-        embed.add_field(name="● **Товары**",    value="Управление товарами и ассортиментом", inline=False)
-        embed.add_field(name="● **Настройки**", value="Статистика и резервное копирование", inline=False)
-        await interaction.response.edit_message(embed=embed, view=AdminMainMenu())
+    @discord.ui.button(label="🗑️ Удалить", style=discord.ButtonStyle.danger, custom_id="subcat_del", row=0)
+    async def del_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
 
+        class DeleteSubcategoryModal(discord.ui.Modal, title="Удалить подкатегорию"):
+            cat_id = discord.ui.TextInput(label="ID подкатегории", placeholder="Введите ID...", required=True)
+
+            async def on_submit(self, i: discord.Interaction):
+                await i.response.defer(ephemeral=True)
+                try:
+                    cid = int(self.cat_id.value)
+                except ValueError:
+                    await i.followup.send("❌ ID должен быть числом", ephemeral=True)
+                    return
+                category = await db.get_category(cid)
+                if not category:
+                    await i.followup.send(f"❌ Подкатегория `{cid}` не найдена", ephemeral=True)
+                    return
+                if not getattr(category, 'parent_id', None):
+                    await i.followup.send("❌ Это корневая категория, не подкатегория", ephemeral=True)
+                    return
+                await db.delete_category(cid)
+                await db.refresh_cache()
+                await i.followup.send(f"✅ `{category.name}` удалена", ephemeral=True)
+                config = get_config(i.guild_id)
+                if config and config.get("shop_channel"):
+                    await send_or_update_shop(i.guild)
+
+        await interaction.response.send_modal(DeleteSubcategoryModal())
+
+    @discord.ui.button(label="📋 Список", style=discord.ButtonStyle.primary, custom_id="subcat_list", row=0)
+    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_owner(interaction):
+            await interaction.response.send_message("❌ Только для Owner", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        await db.refresh_cache()
+        subcats = [c for c in db.categories_cache.values() if getattr(c, 'parent_id', None)]
+        if not subcats:
+            await interaction.followup.send("📭 Нет подкатегорий", ephemeral=True)
+            return
+        embed = discord.Embed(title="📂 Подкатегории", color=discord.Color.blue())
+        for cat in subcats:
+            parent = db.categories_cache.get(cat.parent_id)
+            parent_str = f"`{parent.name}`" if parent else f"ID `{cat.parent_id}`"
+            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Родитель:** {parent_str}\n**Товаров:** {len(cat.lots)}", inline=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="subcat_back", row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_shop_menu_embed(), view=ShopAdminMenu())
+
+# ── Товары ──
 class LotsMenuView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -1304,16 +1535,16 @@ class LotsMenuView(discord.ui.View):
                 class CategorySelectView(discord.ui.View):
                     def __init__(self, lot_name, lot_price, lot_full, lot_stock, seller_id_val, cats, product_code='none', duration='30d'):
                         super().__init__(timeout=60)
-                        self.product_code   = product_code
-                        self.duration       = duration
-                        self.lot_name       = lot_name
-                        self.lot_price      = lot_price
-                        self.lot_full       = lot_full
-                        self.lot_stock      = lot_stock
-                        self.seller_id_val  = seller_id_val
-                        self.cats           = cats
-                        options = [discord.SelectOption(label=cat.name, value=str(cat.id), emoji=cat.emoji) for cat in self.cats.values()]
-                        select  = discord.ui.Select(placeholder="📁 Выберите категорию", options=options)
+                        self.product_code  = product_code
+                        self.duration      = duration
+                        self.lot_name      = lot_name
+                        self.lot_price     = lot_price
+                        self.lot_full      = lot_full
+                        self.lot_stock     = lot_stock
+                        self.seller_id_val = seller_id_val
+                        self.cats          = cats
+                        options = [discord.SelectOption(label=cat.name[:100], value=str(cat.id)) for cat in self.cats.values()]
+                        select  = discord.ui.Select(placeholder="📁 Выберите категорию", options=options[:25])
                         select.callback = self.select_callback
                         self.add_item(select)
 
@@ -1363,7 +1594,7 @@ class LotsMenuView(discord.ui.View):
         class DeleteLotView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=60)
-                options = [discord.SelectOption(label=f"{lot.name} (ID:{lot.lot_id})", value=str(lot.lot_id), description=f"Цена: {lot.price}") for lot in list(lots.values())[:25]]
+                options = [discord.SelectOption(label=f"{lot.name} (ID:{lot.lot_id})"[:100], value=str(lot.lot_id), description=f"Цена: {lot.price}"[:100]) for lot in list(lots.values())[:25]]
                 select  = discord.ui.Select(placeholder="Выберите товар для удаления", options=options)
                 select.callback = self.select_callback
                 self.add_item(select)
@@ -1404,7 +1635,7 @@ class LotsMenuView(discord.ui.View):
             return
         embed = discord.Embed(title="🛒 Список товаров", color=discord.Color.green())
         for lot in list(lots.values())[:20]:
-            stock_text = "♾️ Бесконечно" if lot.stock == -1 else (f"📦 В наличии: {lot.stock} шт." if lot.stock > 0 else "❌ Нет в наличии")
+            stock_text = "♾️ Бесконечно" if lot.stock == -1 else (f"📦 {lot.stock} шт." if lot.stock > 0 else "❌ Нет в наличии")
             embed.add_field(name=lot.name, value=f"**ID:** `{lot.lot_id}`\n**Цена:** {lot.price}\n{stock_text}", inline=False)
         if len(lots) > 20:
             embed.set_footer(text=f"Показано 20 из {len(lots)} товаров")
@@ -1412,11 +1643,7 @@ class LotsMenuView(discord.ui.View):
 
     @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="lot_back", row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Админ панель**", description="Выберите раздел для управления", color=discord.Color.light_gray())
-        embed.add_field(name="● **Категории**", value="Управление категориями товаров", inline=False)
-        embed.add_field(name="● **Товары**",    value="Управление товарами и ассортиментом", inline=False)
-        embed.add_field(name="● **Настройки**", value="Статистика и резервное копирование", inline=False)
-        await interaction.response.edit_message(embed=embed, view=AdminMainMenu())
+        await interaction.response.edit_message(embed=_shop_menu_embed(), view=ShopAdminMenu())
 
 class SettingsMenuView(discord.ui.View):
     def __init__(self):
@@ -1455,11 +1682,7 @@ class SettingsMenuView(discord.ui.View):
 
     @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="settings_back", row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="● **Админ панель**", description="Выберите раздел для управления", color=discord.Color.light_gray())
-        embed.add_field(name="● **Категории**", value="Управление категориями товаров", inline=False)
-        embed.add_field(name="● **Товары**",    value="Управление товарами и ассортиментом", inline=False)
-        embed.add_field(name="● **Настройки**", value="Статистика и резервное копирование", inline=False)
-        await interaction.response.edit_message(embed=embed, view=AdminMainMenu())
+        await interaction.response.edit_message(embed=_admin_main_embed(), view=AdminMainMenu())
 
 async def setup_admin_panel():
     channel = bot.get_channel(ADMIN_PANEL_CHANNEL_ID)
@@ -1563,13 +1786,19 @@ async def on_member_join(member: discord.Member):
         await member.add_roles(unverified_role)
     welcome_channel = member.guild.get_channel(config.get("welcome_channel"))
     if welcome_channel:
-        await welcome_channel.send(
-            f"Добро пожаловать, {member.mention}!\n"
-            f"Добро пожаловать в **TALENT SHOP** | НЕДЕЛЯ ДО ОТКРЫТИЯ!\n\n"
-            f"Как пройти верификацию:\n"
-            f"1. Перейдите в <#{config['verify_channel']}>\n"
-            f"2. Нажмите «Верифицироваться»"
+        embed = discord.Embed(
+            title=f"Добро пожаловать в TALENT SHOP | НЕДЕЛЯ ДО ОТКРЫТИЯ!",
+            description=(
+                f"Добро пожаловать, {member.mention}!\n\n"
+                f"**Как пройти верификацию:**\n"
+                f"1. Перейдите в <#{config['verify_channel']}>\n"
+                f"2. Нажмите «Верифицироваться»"
+            ),
+            color=discord.Color.gold()
         )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"TALENT SHOP • {member.guild.member_count} участников")
+        await welcome_channel.send(content=member.mention, embed=embed)
 
 token = os.getenv('DISCORD_TOKEN')
 if not token:

@@ -59,7 +59,7 @@ CONFIG = {
 }
 
 OWNER_ID             = 1500198262026539099
-SHOP_IMAGE_LINK      = "https://postimg.cc/gallery/KbG4BCR"
+SHOP_IMAGE_LINK      = "https://i.postimg.cc/bvbKd68b/image.png"
 DAILY_PURCHASE_LIMIT = 10
 TICKET_CATEGORY_NAME = 'Tickets'
 TICKET_COOLDOWN_SECONDS = 5

@@ -60,6 +60,10 @@ CONFIG = {
 
 OWNER_ID             = 1500198262026539099
 SHOP_IMAGE_LINK      = "https://i.postimg.cc/bvbKd68b/image.png"
+SHOP_DESCRIPTION     = "🎁 Лето – время обновлений! Порадуйте себя и близких тёплыми подарками по приятным ценам."
+
+# Единый серый цвет для всех embed'ов (сливается с тёмной темой Discord)
+EMBED_COLOR = discord.Color(0x2b2d31)
 DAILY_PURCHASE_LIMIT = 10
 TICKET_CATEGORY_NAME = 'Tickets'
 TICKET_COOLDOWN_SECONDS = 5
@@ -197,7 +201,7 @@ class TicketModal(discord.ui.Modal, title="Создание тикета под�
                 f"**Описание:**\n{self.description.value}\n\n"
                 f"Администраторы скоро ответят.\nДля закрытия используйте кнопку ниже."
             ),
-            color=discord.Color.blue()
+            color=EMBED_COLOR
         )
         view = TicketControlView(ticket_channel.id, interaction.user.id)
         await ticket_channel.send(content=interaction.user.mention, embed=embed, view=view)
@@ -227,7 +231,7 @@ class TicketControlView(discord.ui.View):
         embed = discord.Embed(
             title="🔒 Тикет закрыт",
             description=f"Тикет закрыт {interaction.user.mention}\nКанал будет автоматически удалён через **7 дней**.",
-            color=discord.Color.dark_red()
+            color=EMBED_COLOR
         )
         await channel.send(embed=embed)
 
@@ -323,12 +327,10 @@ async def _do_shop_update(guild: discord.Guild):
         await channel.purge(limit=100, check=lambda m: m.author == bot.user)
     except Exception:
         pass
+    embed = discord.Embed(description=SHOP_DESCRIPTION, color=EMBED_COLOR)
     if SHOP_IMAGE_LINK and SHOP_IMAGE_LINK.startswith(('http://', 'https://')):
-        try:
-            await channel.send(SHOP_IMAGE_LINK)
-        except Exception as e:
-            logger.error(f"Не удалось отправить картинку: {e}")
-    msg = await channel.send(view=view)
+        embed.set_image(url=SHOP_IMAGE_LINK)
+    msg = await channel.send(embed=embed, view=view)
     await db.set_shop_messages(guild.id, img_id=msg.id)
 
 async def send_or_update_shop(guild: discord.Guild):
@@ -348,7 +350,7 @@ class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
         if not matched_cats and not matched_lots:
             await interaction.followup.send(f"❌ По запросу **{search_term}** ничего не найдено.", ephemeral=True)
             return
-        embed = discord.Embed(title=f"🔍 Результаты поиска: {search_term}", color=discord.Color.blue())
+        embed = discord.Embed(title=f"🔍 Результаты поиска: {search_term}", color=EMBED_COLOR)
         if matched_cats:
             embed.add_field(
                 name="📁 Категории",
@@ -382,7 +384,7 @@ async def lot_select_callback(interaction: discord.Interaction, select):
     embed = discord.Embed(
         title=f"🛒 {lot.name}",
         description=f"💰 **{lot.price}**\n{stock_text}\n\n**📝 Описание:**\n{lot.full_description}\n\n**👤 Продавец:** {seller_name}",
-        color=discord.Color.green()
+        color=EMBED_COLOR
     )
     if lot.image_url and lot.image_url.startswith(('http://', 'https://')):
         embed.set_thumbnail(url=lot.image_url)
@@ -418,7 +420,7 @@ class ShopView(discord.ui.View):
         subcats     = await db.get_subcategories(category_id)
         if subcats:
             category = await db.get_category(category_id)
-            embed    = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
+            embed    = discord.Embed(title=f"{category.emoji} {category.name}", color=EMBED_COLOR)
             await interaction.followup.send(embed=embed, view=SubCategoryView(subcats), ephemeral=True)
         else:
             await _show_lots(interaction, category_id)
@@ -441,7 +443,7 @@ class SubCategoryView(discord.ui.View):
         subcats     = await db.get_subcategories(category_id)
         if subcats:
             category = await db.get_category(category_id)
-            embed    = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
+            embed    = discord.Embed(title=f"{category.emoji} {category.name}", color=EMBED_COLOR)
             await interaction.followup.send(embed=embed, view=SubCategoryView(subcats), ephemeral=True)
         else:
             await _show_lots(interaction, category_id)
@@ -452,7 +454,7 @@ async def _show_lots(interaction: discord.Interaction, category_id: int):
         await interaction.followup.send("В этой категории нет товаров.", ephemeral=True)
         return
     category = await db.get_category(category_id)
-    embed    = discord.Embed(title=f"{category.emoji} {category.name}", color=discord.Color.blue())
+    embed    = discord.Embed(title=f"{category.emoji} {category.name}", color=EMBED_COLOR)
     for lot in lots:
         stock_text = "♾️" if lot.stock == -1 else (f"📦 {lot.stock}" if lot.stock > 0 else "❌")
         embed.add_field(name=f"🛒 {lot.name}", value=f"💰 {lot.price}\n{stock_text}", inline=False)
@@ -498,7 +500,7 @@ class LotsView(discord.ui.View):
             embed = discord.Embed(
                 title=f"🛒 {lot.name}",
                 description=f"💰 **{lot.price}**\n{stock_text}\n\n**📝 Детальное описание:**\n{lot.full_description}\n\n**👤 Продавец:** {seller_name}",
-                color=discord.Color.green()
+                color=EMBED_COLOR
             )
             if lot.image_url and lot.image_url.startswith(('http://', 'https://')):
                 embed.set_thumbnail(url=lot.image_url)
@@ -639,7 +641,7 @@ class LotActionView(discord.ui.View):
                         f"4. Закройте тикет кнопкой ниже.\n\n"
                         f"**💰 Покупатель:** переведите деньги, напишите «Оплатил», получите товар."
                     ),
-                    color=discord.Color.green()
+                    color=EMBED_COLOR
                 )
                 if voice_channel:
                     embed.add_field(name="🎙️ Голосовой канал", value=voice_channel.mention, inline=False)
@@ -689,7 +691,7 @@ class LotActionView(discord.ui.View):
                     if log_ch:
                         log_embed = discord.Embed(
                             title="🛒 Новая покупка",
-                            color=discord.Color.green(),
+                            color=EMBED_COLOR,
                             timestamp=datetime.now(timezone.utc)
                         )
                         log_embed.add_field(name="👤 Покупатель", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=True)
@@ -845,7 +847,7 @@ class ReviewModal(discord.ui.Modal, title="Оставить отзыв"):
         embed = discord.Embed(
             title="📝 Отзыв о покупке",
             description=f"**Товар:** {self.product}\n**Оценка:** {stars} ({rating}/5)\n\n**Отзыв:**\n{self.comment.value}",
-            color=discord.Color.gold()
+            color=EMBED_COLOR
         )
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
         embed.set_footer(text=f"Покупатель: {interaction.user.name} | Продавец: {self.seller.name if self.seller else 'Неизвестен'}")
@@ -867,7 +869,7 @@ async def update_seller_review_catalog(guild: discord.Guild, review_channel: dis
     embed = discord.Embed(
         title=f"⭐ Отзывы о {seller.display_name}",
         description=f"**Средний рейтинг:** {'⭐' * round(avg_rating)}{'☆' * (5 - round(avg_rating))} ({avg_rating}/5)\n**Всего отзывов:** {len(reviews)}",
-        color=discord.Color.gold()
+        color=EMBED_COLOR
     )
     embed.set_thumbnail(url=seller.avatar.url if seller.avatar else None)
     for rev in reviews[:10]:
@@ -891,7 +893,7 @@ async def build_status_embed(guild: discord.Guild, user: discord.Member) -> disc
     user_reviews = await db.get_user_reviews(user.id)
     stats       = await db.get_stats(user.id)
     ref_count   = await db.get_referral_count(user.id)
-    embed = discord.Embed(title=f"👤 Профиль участника: {user.display_name}", color=discord.Color.blue())
+    embed = discord.Embed(title=f"👤 Профиль участника: {user.display_name}", color=EMBED_COLOR)
     embed.set_thumbnail(url=user.avatar.url if user.avatar else None)
     embed.add_field(
         name="🛒 Статистика",
@@ -937,7 +939,7 @@ async def setup_verify_cmd(interaction: discord.Interaction):
     channel = interaction.guild.get_channel(config.get("verify_channel"))
     if channel:
         await channel.purge(limit=50, check=lambda m: m.author == bot.user)
-        embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=discord.Color.gold())
+        embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=EMBED_COLOR)
         await channel.send(embed=embed, view=VerifyView())
     await interaction.followup.send("✅ Панель верификации обновлена!", ephemeral=True)
 
@@ -959,7 +961,7 @@ async def setup_ticket_panel(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Канал {TICKET_CHANNEL_ID} не найден", ephemeral=True)
         return
     await channel.purge(limit=50, check=lambda m: m.author == bot.user)
-    embed = discord.Embed(title="🎫 Служба поддержки", description="**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n📌 После решения тикет будет закрыт и удалён через 7 дней.", color=discord.Color.blue())
+    embed = discord.Embed(title="🎫 Служба поддержки", description="**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n📌 После решения тикет будет закрыт и удалён через 7 дней.", color=EMBED_COLOR)
     await channel.send(embed=embed, view=TicketCreateButton())
     await interaction.followup.send(f"✅ Панель тикетов создана в {channel.mention}", ephemeral=True)
 
@@ -1124,7 +1126,7 @@ async def auto_cleanup_tickets():
                         embed = discord.Embed(
                             title="🔒 Тикет автоматически закрыт",
                             description="Закрыт из-за отсутствия активности 7 дней.",
-                            color=discord.Color.dark_red()
+                            color=EMBED_COLOR
                         )
                         await channel.send(embed=embed)
                         await asyncio.sleep(2)
@@ -1158,7 +1160,7 @@ async def _send_verify_panel(guild_config: dict):
     if not channel:
         return
     await channel.purge(limit=50, check=lambda m: m.author == bot.user)
-    embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=discord.Color.gold())
+    embed = discord.Embed(title="🔒 Верификация", description="Нажми на кнопку ниже, чтобы получить доступ к серверу.", color=EMBED_COLOR)
     try:
         await channel.send(embed=embed, view=VerifyView())
     except Exception as e:
@@ -1172,7 +1174,7 @@ async def _send_ticket_panel_from_config(guild_config: dict):
     embed = discord.Embed(
         title="🎫 Служба поддержки",
         description="**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n📌 Удаление тикета из архива через 7 дней",
-        color=discord.Color.blue()
+        color=EMBED_COLOR
     )
     embed.set_footer(text=f"{guild_config['name']} — Техническая поддержка")
     try:
@@ -1205,13 +1207,13 @@ async def _assign_unverified_roles():
 # ================= АДМИН ПАНЕЛЬ =================
 
 def _admin_main_embed():
-    e = discord.Embed(title="● Админ панель", description="Выберите раздел", color=discord.Color.light_gray())
+    e = discord.Embed(title="● Админ панель", description="Выберите раздел", color=EMBED_COLOR)
     e.add_field(name="● Товары",    value="Категории, подкатегории, товары", inline=False)
     e.add_field(name="● Настройки", value="Статистика, магазин, бэкап",      inline=False)
     return e
 
 def _shop_menu_embed():
-    e = discord.Embed(title="● Товары", color=discord.Color.light_gray())
+    e = discord.Embed(title="● Товары", color=EMBED_COLOR)
     e.add_field(name="● Категории",    value="Корневые категории",  inline=False)
     e.add_field(name="● Подкатегории", value="Дочерние категории",  inline=False)
     e.add_field(name="● Товары",       value="Лоты магазина",       inline=False)
@@ -1238,7 +1240,7 @@ class AdminMainMenu(discord.ui.View):
 
     @discord.ui.button(label="Настройки", style=discord.ButtonStyle.secondary, custom_id="admin_settings_menu", row=0)
     async def settings_menu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        e = discord.Embed(title="● Настройки", color=discord.Color.light_gray())
+        e = discord.Embed(title="● Настройки", color=EMBED_COLOR)
         e.add_field(name="● Статистика",       value="Показать статистику",      inline=False)
         e.add_field(name="● Обновить магазин", value="Принудительное обновление", inline=False)
         e.add_field(name="● Бэкап",            value="Создать резервную копию",   inline=False)
@@ -1255,7 +1257,7 @@ class ShopAdminMenu(discord.ui.View):
 
     @discord.ui.button(label="Категории", style=discord.ButtonStyle.secondary, custom_id="sa_cats", row=0)
     async def cats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        e = discord.Embed(title="● Категории", color=discord.Color.light_gray())
+        e = discord.Embed(title="● Категории", color=EMBED_COLOR)
         e.add_field(name="➕ Добавить", value="Создать корневую категорию", inline=False)
         e.add_field(name="🗑️ Удалить",  value="Удалить категорию по ID",    inline=False)
         e.add_field(name="📋 Список",   value="Показать корневые категории", inline=False)
@@ -1263,7 +1265,7 @@ class ShopAdminMenu(discord.ui.View):
 
     @discord.ui.button(label="Подкатегории", style=discord.ButtonStyle.secondary, custom_id="sa_subcats", row=0)
     async def subcats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        e = discord.Embed(title="● Подкатегории", color=discord.Color.light_gray())
+        e = discord.Embed(title="● Подкатегории", color=EMBED_COLOR)
         e.add_field(name="➕ Добавить", value="Создать подкатегорию",         inline=False)
         e.add_field(name="🗑️ Удалить",  value="Удалить подкатегорию по ID",   inline=False)
         e.add_field(name="📋 Список",   value="Показать все подкатегории",     inline=False)
@@ -1271,7 +1273,7 @@ class ShopAdminMenu(discord.ui.View):
 
     @discord.ui.button(label="Товары", style=discord.ButtonStyle.secondary, custom_id="sa_lots", row=0)
     async def lots_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        e = discord.Embed(title="● Товары", color=discord.Color.light_gray())
+        e = discord.Embed(title="● Товары", color=EMBED_COLOR)
         e.add_field(name="➕ Добавить", value="Создать новый товар",    inline=False)
         e.add_field(name="🗑️ Удалить",  value="Удалить товар",          inline=False)
         e.add_field(name="📋 Список",   value="Показать все товары",     inline=False)
@@ -1349,7 +1351,7 @@ class CategoriesMenuView(discord.ui.View):
         if not root_cats:
             await interaction.followup.send("📭 Нет корневых категорий", ephemeral=True)
             return
-        embed = discord.Embed(title="📁 Корневые категории", color=discord.Color.blue())
+        embed = discord.Embed(title="📁 Корневые категории", color=EMBED_COLOR)
         for cat in root_cats:
             embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Товаров:** {db.get_category_total_lots_count(cat.id)}", inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -1441,7 +1443,7 @@ class SubCategoriesMenuView(discord.ui.View):
         if not subcats:
             await interaction.followup.send("📭 Нет подкатегорий", ephemeral=True)
             return
-        embed = discord.Embed(title="📂 Подкатегории", color=discord.Color.blue())
+        embed = discord.Embed(title="📂 Подкатегории", color=EMBED_COLOR)
         for cat in subcats:
             parent = db.categories_cache.get(cat.parent_id)
             parent_str = f"`{parent.name}`" if parent else f"ID `{cat.parent_id}`"
@@ -1637,7 +1639,7 @@ class LotsMenuView(discord.ui.View):
         if not lots:
             await interaction.followup.send("📭 Нет товаров", ephemeral=True)
             return
-        embed = discord.Embed(title="🛒 Список товаров", color=discord.Color.green())
+        embed = discord.Embed(title="🛒 Список товаров", color=EMBED_COLOR)
         for lot in list(lots.values())[:20]:
             stock_text = "♾️ Бесконечно" if lot.stock == -1 else (f"📦 {lot.stock} шт." if lot.stock > 0 else "❌ Нет в наличии")
             embed.add_field(name=lot.name, value=f"**ID:** `{lot.lot_id}`\n**Цена:** {lot.price}\n{stock_text}", inline=False)
@@ -1660,7 +1662,7 @@ class SettingsMenuView(discord.ui.View):
             return
         await interaction.response.defer(ephemeral=True)
         await db.refresh_cache()
-        embed = discord.Embed(title="📊 Статистика магазина", color=discord.Color.gold())
+        embed = discord.Embed(title="📊 Статистика магазина", color=EMBED_COLOR)
         embed.add_field(name="📁 Категорий", value=str(len(db.categories_cache)), inline=True)
         embed.add_field(name="🛒 Товаров",   value=str(len(db.lots_cache)),       inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -1697,7 +1699,7 @@ async def setup_admin_panel():
             logger.error(f"Админ канал {ADMIN_PANEL_CHANNEL_ID} не найден: {e}")
             return
     await channel.purge(limit=50, check=lambda m: m.author == bot.user)
-    embed = discord.Embed(title="🛠️ Админ панель", description="Нажмите на кнопку ниже для открытия меню управления", color=discord.Color.blurple())
+    embed = discord.Embed(title="🛠️ Админ панель", description="Нажмите на кнопку ниже для открытия меню управления", color=EMBED_COLOR)
     await channel.send(embed=embed, view=AdminPanelView())
     logger.info("✅ Админ панель отправлена")
 
@@ -1798,7 +1800,7 @@ async def on_member_join(member: discord.Member):
                 f"1. Перейдите в <#{config['verify_channel']}>\n"
                 f"2. Нажмите «Верифицироваться»"
             ),
-            color=discord.Color.gold()
+            color=EMBED_COLOR
         )
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"TALENT SHOP • {member.guild.member_count} участников")

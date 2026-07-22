@@ -59,7 +59,7 @@ CONFIG = {
 }
 
 OWNER_ID             = 1500198262026539099
-SHOP_IMAGE_LINK      = "https://i.postimg.cc/bvbKd68b/image.png"
+SHOP_IMAGE_LINK      = "https://i.postimg.cc/TYpM0963/lunacy-shop-banner-readable.png"
 SHOP_DESCRIPTION     = "🎁 Лето – время обновлений! Порадуйте себя и близких тёплыми подарками по приятным ценам."
 
 # Единый серый цвет для всех embed'ов (сливается с тёмной темой Discord)

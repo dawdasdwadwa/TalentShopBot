@@ -561,6 +561,37 @@ async def get_category(category_id: int) -> Optional[Category]:
     categories_cache[category_id] = result
     return result
 
+def get_category_total_lots_count(category_id: int) -> int:
+    """
+    Считает количество товаров в категории, включая товары всех вложенных
+    подкатегорий (рекурсивно). В отличие от len(category.lots), который
+    учитывает только товары, привязанные напрямую к этой категории.
+    Работает с уже загруженным categories_cache, поэтому вызывается синхронно.
+    """
+    global categories_cache
+    if category_id not in categories_cache:
+        return 0
+
+    children_by_parent: Dict[Optional[int], List[int]] = {}
+    for cat in categories_cache.values():
+        children_by_parent.setdefault(cat.parent_id, []).append(cat.id)
+
+    visited = set()
+
+    def _count(cat_id: int) -> int:
+        if cat_id in visited:
+            return 0
+        visited.add(cat_id)
+        cat = categories_cache.get(cat_id)
+        if not cat:
+            return 0
+        total = len(cat.lots)
+        for child_id in children_by_parent.get(cat_id, []):
+            total += _count(child_id)
+        return total
+
+    return _count(category_id)
+
 async def add_category(name: str, emoji: str = "📁", description: str = None, image_url: str = None, parent_id: int = None) -> int:
     global categories_cache
     async with transaction():

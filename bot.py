@@ -352,7 +352,7 @@ class ShopSearchModal(discord.ui.Modal, title="🔍 Поиск товара"):
         if matched_cats:
             embed.add_field(
                 name="📁 Категории",
-                value="\n".join(f"{c.emoji} **{c.name}** — товаров: {len(c.lots)}" for c in matched_cats),
+                value="\n".join(f"{c.emoji} **{c.name}** — товаров: {db.get_category_total_lots_count(c.id)}" for c in matched_cats),
                 inline=False
             )
         if matched_lots:
@@ -397,7 +397,7 @@ class ShopView(discord.ui.View):
     def _build(self):
         self.clear_items()
         options = [
-            discord.SelectOption(label=cat.name, value=str(cat.id), emoji=cat.emoji, description=f"Товаров: {len(cat.lots)}")
+            discord.SelectOption(label=cat.name, value=str(cat.id), emoji=cat.emoji, description=f"Товаров: {db.get_category_total_lots_count(cat.id)}")
             for cat in db.categories_cache.values()
             if getattr(cat, 'parent_id', None) is None
         ]
@@ -1351,7 +1351,7 @@ class CategoriesMenuView(discord.ui.View):
             return
         embed = discord.Embed(title="📁 Корневые категории", color=discord.Color.blue())
         for cat in root_cats:
-            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Товаров:** {len(cat.lots)}", inline=False)
+            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Товаров:** {db.get_category_total_lots_count(cat.id)}", inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="cat_back", row=1)
@@ -1445,7 +1445,7 @@ class SubCategoriesMenuView(discord.ui.View):
         for cat in subcats:
             parent = db.categories_cache.get(cat.parent_id)
             parent_str = f"`{parent.name}`" if parent else f"ID `{cat.parent_id}`"
-            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Родитель:** {parent_str}\n**Товаров:** {len(cat.lots)}", inline=False)
+            embed.add_field(name=f"{cat.emoji} {cat.name}", value=f"**ID:** `{cat.id}`\n**Родитель:** {parent_str}\n**Товаров:** {db.get_category_total_lots_count(cat.id)}", inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="◀️ Назад", style=discord.ButtonStyle.secondary, custom_id="subcat_back", row=1)

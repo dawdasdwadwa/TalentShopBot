@@ -1316,25 +1316,35 @@ async def restore_from_backup_channel(channel_id: int, bot):
 
 # ================= АВТОМАТИЧЕСКИЙ БАН ПИРАТОВ =================
 async def add_to_blacklist_auto(user_hash: int) -> bool:
-    """Добавляет хэш нарушителя в черный список базы данных и обновляет кэш."""
+    """
+    Добавляет хэш нарушителя в чёрный список и обновляет кэш.
+    Таблица blacklist хранит только user_id; причина/дата и история
+    бана пишутся в blacklist_extended / ban_history — как в add_to_blacklist().
+    """
     global blacklist_cache
+    reason = "Автоматическая блокировка: Попытка пиратства/Передача ключа"
     try:
+        existing = await fetchone('SELECT 1 FROM blacklist WHERE user_id = ?', (user_hash,))
+        if existing:
+            return False  # Уже забанен
+
+        created_at = datetime.now(timezone.utc).isoformat()
         async with transaction():
-            # Проверяем, нет ли уже этого хэша в БД
-            async with db.execute("SELECT 1 FROM blacklist WHERE user_id = ?", (user_hash,)) as cursor:
-                if await cursor.fetchone():
-                    return False  # Уже забанен
-            
-            # Добавляем запись в таблицу blacklist
-            await db.execute(
-                "INSERT INTO blacklist (user_id, reason, created_at) VALUES (?, ?, ?)",
-                (user_hash, "Автоматическая блокировка: Попытка пиратства/Передача ключа", datetime.now(timezone.utc).isoformat())
+            await _execute_no_lock('INSERT OR IGNORE INTO blacklist (user_id) VALUES (?)', (user_hash,))
+            await _execute_no_lock(
+                'INSERT INTO blacklist_extended (user_id, moderator_id, reason, created_at) '
+                'VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET moderator_id=?, reason=?, created_at=?',
+                (user_hash, 0, reason, created_at, 0, reason, created_at)
             )
-        
+            await _execute_no_lock(
+                'INSERT INTO ban_history (user_id, moderator_id, action, reason, created_at) VALUES (?, ?, ?, ?, ?)',
+                (user_hash, 0, 'ban', reason, created_at)
+            )
+
         # Обновляем кэш, чтобы бот сразу знал о бане
         if user_hash not in blacklist_cache:
             blacklist_cache.append(user_hash)
-            
+
         logger.info(f"💾 Хэш {user_hash} успешно занесен в ЧС через кнопку.")
         return True
     except Exception as e:

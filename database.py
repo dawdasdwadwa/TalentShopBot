@@ -305,6 +305,14 @@ async def init_db():
             )''')
             await db.execute('CREATE INDEX IF NOT EXISTS idx_promos_expires ON promos(expires)')
 
+            # Активированные пользователем промокоды (ждут применения к следующей покупке)
+            await db.execute('''CREATE TABLE IF NOT EXISTS active_promos (
+                user_id INTEGER PRIMARY KEY,
+                code TEXT NOT NULL,
+                discount INTEGER NOT NULL,
+                created_at TEXT
+            )''')
+
             await db.execute('''CREATE TABLE IF NOT EXISTS blacklist (
                 user_id INTEGER PRIMARY KEY
             )''')
@@ -995,6 +1003,25 @@ async def get_expired_promos(current_date: str) -> List[str]:
     rows = await fetchall('SELECT code FROM promos WHERE expires <= ?', (current_date,))
     return [r['code'] for r in rows]
 
+# ================= АКТИВНЫЕ ПРОМОКОДЫ ПОЛЬЗОВАТЕЛЯ =================
+async def set_active_promo(user_id: int, code: str, discount: int):
+    """Сохраняет промокод как активный для пользователя — будет применён к следующей покупке."""
+    created_at = datetime.now(timezone.utc).isoformat()
+    async with transaction():
+        await _execute_no_lock(
+            'INSERT INTO active_promos (user_id, code, discount, created_at) VALUES (?, ?, ?, ?) '
+            'ON CONFLICT(user_id) DO UPDATE SET code = ?, discount = ?, created_at = ?',
+            (user_id, code, discount, created_at, code, discount, created_at)
+        )
+
+async def get_active_promo(user_id: int) -> Optional[dict]:
+    row = await fetchone('SELECT * FROM active_promos WHERE user_id = ?', (user_id,))
+    return dict(row) if row else None
+
+async def clear_active_promo(user_id: int):
+    async with transaction():
+        await _execute_no_lock('DELETE FROM active_promos WHERE user_id = ?', (user_id,))
+
 async def get_blacklist() -> List[int]:
     global blacklist_cache
     if blacklist_cache:
@@ -1316,35 +1343,25 @@ async def restore_from_backup_channel(channel_id: int, bot):
 
 # ================= АВТОМАТИЧЕСКИЙ БАН ПИРАТОВ =================
 async def add_to_blacklist_auto(user_hash: int) -> bool:
-    """
-    Добавляет хэш нарушителя в чёрный список и обновляет кэш.
-    Таблица blacklist хранит только user_id; причина/дата и история
-    бана пишутся в blacklist_extended / ban_history — как в add_to_blacklist().
-    """
+    """Добавляет хэш нарушителя в черный список базы данных и обновляет кэш."""
     global blacklist_cache
-    reason = "Автоматическая блокировка: Попытка пиратства/Передача ключа"
     try:
-        existing = await fetchone('SELECT 1 FROM blacklist WHERE user_id = ?', (user_hash,))
-        if existing:
-            return False  # Уже забанен
-
-        created_at = datetime.now(timezone.utc).isoformat()
         async with transaction():
-            await _execute_no_lock('INSERT OR IGNORE INTO blacklist (user_id) VALUES (?)', (user_hash,))
-            await _execute_no_lock(
-                'INSERT INTO blacklist_extended (user_id, moderator_id, reason, created_at) '
-                'VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET moderator_id=?, reason=?, created_at=?',
-                (user_hash, 0, reason, created_at, 0, reason, created_at)
+            # Проверяем, нет ли уже этого хэша в БД
+            async with db.execute("SELECT 1 FROM blacklist WHERE user_id = ?", (user_hash,)) as cursor:
+                if await cursor.fetchone():
+                    return False  # Уже забанен
+            
+            # Добавляем запись в таблицу blacklist
+            await db.execute(
+                "INSERT INTO blacklist (user_id, reason, created_at) VALUES (?, ?, ?)",
+                (user_hash, "Автоматическая блокировка: Попытка пиратства/Передача ключа", datetime.now(timezone.utc).isoformat())
             )
-            await _execute_no_lock(
-                'INSERT INTO ban_history (user_id, moderator_id, action, reason, created_at) VALUES (?, ?, ?, ?, ?)',
-                (user_hash, 0, 'ban', reason, created_at)
-            )
-
+        
         # Обновляем кэш, чтобы бот сразу знал о бане
         if user_hash not in blacklist_cache:
             blacklist_cache.append(user_hash)
-
+            
         logger.info(f"💾 Хэш {user_hash} успешно занесен в ЧС через кнопку.")
         return True
     except Exception as e:

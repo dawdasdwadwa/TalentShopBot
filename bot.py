@@ -34,6 +34,7 @@ TICKET_CHANNEL_ID          = 1500242313211805788
 BACKUP_CHANNEL_ID          = 1503146387129368718
 BACKUP_MAX_MESSAGES        = 50
 ADMIN_PANEL_CHANNEL_ID     = 1503168213016641536
+REFERRAL_PROMO_CHANNEL_ID  = 1529486925730287666
 
 # ================= КОНФИГУРАЦИЯ СЕРВЕРА =================
 CONFIG = {
@@ -626,12 +627,33 @@ class LotActionView(discord.ui.View):
                 else:
                     stock_display = "❌ Нет в наличии"
 
+                # ── Применение активного промокода (если есть и всё ещё валиден) ──
+                active_promo = await db.get_active_promo(interaction.user.id)
+                promo_valid = False
+                discounted_price_num: Optional[float] = None
+                price_display = self.lot.price
+                if active_promo:
+                    promo_check = await db.get_promo(active_promo['code'])
+                    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                    if promo_check and not (promo_check.expires and promo_check.expires <= today) and promo_check.uses < promo_check.max_uses:
+                        promo_valid = True
+                        base_num = await parse_price_rub(self.lot.price)
+                        if base_num:
+                            discounted_price_num = base_num * (1 - active_promo['discount'] / 100)
+                            price_display = (
+                                f"~~{self.lot.price}~~ → **{discounted_price_num:.0f} ₽** "
+                                f"(промокод `{active_promo['code']}` −{active_promo['discount']}%)"
+                            )
+                    else:
+                        # Промокод больше не действителен — снимаем
+                        await db.clear_active_promo(interaction.user.id)
+
                 embed = discord.Embed(
                     title="🛒 НОВЫЙ ЗАКАЗ",
                     description=(
                         f"**Покупатель:** {interaction.user.mention}\n"
                         f"**Товар:** {self.lot.name}\n"
-                        f"**Цена:** {self.lot.price}\n"
+                        f"**Цена:** {price_display}\n"
                         f"{stock_display}\n\n"
                         f"**📝 Детальное описание:**\n{self.lot.full_description}\n\n"
                         f"**📝 Инструкция для продавца:**\n"
@@ -655,7 +677,7 @@ class LotActionView(discord.ui.View):
                             f"🛒 **Новый заказ!**\n"
                             f"👤 Покупатель: {interaction.user.name} (`{interaction.user.id}`)\n"
                             f"📦 Товар: **{self.lot.name}**\n"
-                            f"💰 Цена: {self.lot.price}\n"
+                            f"💰 Цена: {price_display}\n"
                             f"📝 Канал: {ticket_channel.mention}"
                         )
                     except discord.Forbidden:
@@ -670,8 +692,12 @@ class LotActionView(discord.ui.View):
                 if lot_data.stock != -1:
                     await update_stock(self.lot_id, -1)
 
-                price_num = await parse_price_rub(self.lot.price)
-                await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=int(price_num) if price_num else 0)
+                revenue_value = discounted_price_num if (promo_valid and discounted_price_num is not None) else await parse_price_rub(self.lot.price)
+                await db.update_stats(self.lot.seller_id, sales_inc=1, revenue_inc=int(revenue_value) if revenue_value else 0)
+
+                if promo_valid:
+                    await db.increment_promo_uses(active_promo['code'])
+                    await db.clear_active_promo(interaction.user.id)
 
                 # Роль Покупатель
                 config = get_config(interaction.guild_id)
@@ -696,7 +722,7 @@ class LotActionView(discord.ui.View):
                         )
                         log_embed.add_field(name="👤 Покупатель", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=True)
                         log_embed.add_field(name="📦 Товар", value=self.lot.name, inline=True)
-                        log_embed.add_field(name="💰 Цена", value=self.lot.price, inline=True)
+                        log_embed.add_field(name="💰 Цена", value=price_display, inline=True)
                         log_embed.add_field(name="📝 Канал", value=ticket_channel.mention, inline=False)
                         try:
                             await log_ch.send(embed=log_embed)
@@ -904,7 +930,7 @@ async def build_status_embed(guild: discord.Guild, user: discord.Member) -> disc
         ),
         inline=False
     )
-    embed.add_field(name="🔗 Рефералов", value=f"**{ref_count}**", inline=False)
+    embed.add_field(name="🔗 Рефералов", value=f"**{ref_count}** (реф-код: `{user.id}`)", inline=False)
     if purchases:
         purchase_text = ""
         for p in purchases[:5]:
@@ -919,6 +945,138 @@ async def build_status_embed(guild: discord.Guild, user: discord.Member) -> disc
             inline=False
         )
     return embed
+
+# ================= РЕФЕРАЛЫ И ПРОМОКОДЫ =================
+class ReferralCodeModal(discord.ui.Modal, title="👥 Ввести реф-код"):
+    code = discord.ui.TextInput(
+        label="Реф-код (Discord ID пригласившего)",
+        placeholder="Например: 123456789012345678",
+        required=True, max_length=32
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        raw = self.code.value.strip()
+        if not raw.isdigit():
+            await interaction.followup.send("❌ Реф-код должен быть числовым Discord ID. Спроси его у друга через кнопку «Мой реф-код».", ephemeral=True)
+            return
+        referrer_id = int(raw)
+        if referrer_id == interaction.user.id:
+            await interaction.followup.send("❌ Нельзя использовать собственный реф-код.", ephemeral=True)
+            return
+        referrer_member = interaction.guild.get_member(referrer_id)
+        if not referrer_member:
+            await interaction.followup.send("❌ Пользователь с таким ID не найден на сервере.", ephemeral=True)
+            return
+        existing = await db.get_referrer(interaction.user.id)
+        if existing:
+            await interaction.followup.send("❌ Вы уже использовали реф-код ранее — повторно ввести нельзя.", ephemeral=True)
+            return
+        await db.add_referral(referrer_id, interaction.user.id)
+        await interaction.followup.send(
+            f"✅ Реф-код принят! Вы отмечены как приглашённый пользователем {referrer_member.mention}.",
+            ephemeral=True
+        )
+        try:
+            await referrer_member.send(
+                f"🎉 {interaction.user.mention} ввёл(а) твой реф-код!\n"
+                f"Посмотреть общее число рефералов можно в /profile."
+            )
+        except Exception:
+            pass
+
+
+class PromoCodeModal(discord.ui.Modal, title="🎟️ Ввести промокод"):
+    code = discord.ui.TextInput(
+        label="Промокод", placeholder="Например: SUMMER10",
+        required=True, max_length=32
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        raw = self.code.value.strip()
+        if not raw:
+            await interaction.followup.send("❌ Введите промокод.", ephemeral=True)
+            return
+        promos = await db.get_all_promos()
+        promo = None
+        for pcode, p in promos.items():
+            if pcode.lower() == raw.lower():
+                promo = p
+                break
+        if not promo:
+            await interaction.followup.send("❌ Такой промокод не найден. Проверьте написание.", ephemeral=True)
+            return
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        if promo.expires and promo.expires <= today:
+            await interaction.followup.send("❌ Срок действия этого промокода истёк.", ephemeral=True)
+            return
+        if promo.uses >= promo.max_uses:
+            await interaction.followup.send("❌ Лимит использований этого промокода исчерпан.", ephemeral=True)
+            return
+        prev = await db.get_active_promo(interaction.user.id)
+        await db.set_active_promo(interaction.user.id, promo.code, promo.discount)
+        note = "\n⚠️ Предыдущий неиспользованный промокод заменён." if prev else ""
+        await interaction.followup.send(
+            f"✅ Промокод **{promo.code}** активирован!\n"
+            f"🎁 Скидка **{promo.discount}%** автоматически применится к вашей следующей покупке в магазине.{note}",
+            ephemeral=True
+        )
+
+
+class ReferralPromoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔗 Мой реф-код", style=discord.ButtonStyle.secondary, custom_id="ref_my_code_btn", row=0)
+    async def my_code_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        count = await db.get_referral_count(interaction.user.id)
+        embed = discord.Embed(
+            title="🔗 Твой реф-код",
+            description=(
+                f"Твой реф-код:\n```{interaction.user.id}```\n"
+                f"Отправь его другу — пусть нажмёт **«Ввести реф-код»** ниже и введёт этот код при регистрации на сервере.\n\n"
+                f"👥 Приглашено друзей: **{count}**"
+            ),
+            color=EMBED_COLOR
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="👥 Ввести реф-код", style=discord.ButtonStyle.primary, custom_id="ref_enter_code_btn", row=0)
+    async def enter_code_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ReferralCodeModal())
+
+    @discord.ui.button(label="🎟️ Ввести промокод", style=discord.ButtonStyle.success, custom_id="promo_enter_btn", row=0)
+    async def enter_promo_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(PromoCodeModal())
+
+
+async def _send_referral_promo_panel():
+    channel = await _fetch_channel_safe(REFERRAL_PROMO_CHANNEL_ID)
+    if not channel:
+        logger.error(f"Канал рефералов/промокодов {REFERRAL_PROMO_CHANNEL_ID} не найден")
+        return
+    await channel.purge(limit=50, check=lambda m: m.author == bot.user)
+    embed = discord.Embed(
+        title="🔗 Реферальная программа и промокоды",
+        description=(
+            "**👥 Реферальная программа**\n"
+            "Приглашай друзей на сервер!\n"
+            "• Нажми **«Мой реф-код»** — узнать свой код и сколько друзей уже пришло по нему.\n"
+            "• Твой друг нажимает **«Ввести реф-код»** и вводит твой код.\n\n"
+            "**🎟️ Есть промокод?**\n"
+            "• Нажми **«Ввести промокод»** — скидка автоматически применится к твоей следующей покупке в магазине.\n\n"
+            "*Реф-код можно ввести только один раз.*"
+        ),
+        color=EMBED_COLOR
+    )
+    embed.set_footer(text="TALENT SHOP • Реферальная программа")
+    try:
+        await channel.send(embed=embed, view=ReferralPromoView())
+        logger.info("✅ Панель рефералов/промокодов отправлена")
+    except Exception as e:
+        logger.error(f"Ошибка отправки панели рефералов/промокодов: {e}")
 
 # ================= КОМАНДЫ =================
 async def owner_only(interaction: discord.Interaction) -> bool:
@@ -964,6 +1122,14 @@ async def setup_ticket_panel(interaction: discord.Interaction):
     embed = discord.Embed(title="🎫 Служба поддержки", description="**Нажмите на кнопку ниже, чтобы создать обращение.**\n\n📌 После решения тикет будет закрыт и удалён через 7 дней.", color=EMBED_COLOR)
     await channel.send(embed=embed, view=TicketCreateButton())
     await interaction.followup.send(f"✅ Панель тикетов создана в {channel.mention}", ephemeral=True)
+
+@bot.tree.command(name='setup_referral_panel', description='[OWNER] Пересоздать панель реф-кодов и промокодов')
+async def setup_referral_panel_cmd(interaction: discord.Interaction):
+    if not await owner_only(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)
+    await _send_referral_promo_panel()
+    await interaction.followup.send("✅ Панель рефералов/промокодов обновлена!", ephemeral=True)
 
 @bot.tree.command(name='restore_backup', description='[OWNER] Восстановить магазин из бэкапа')
 async def restore_backup(interaction: discord.Interaction):
@@ -1734,6 +1900,7 @@ async def setup_panels():
     await asyncio.gather(
         *[_setup_single_guild(gid, gcfg) for gid, gcfg in CONFIG.items()],
         _assign_unverified_roles(),
+        _send_referral_promo_panel(),
         return_exceptions=True,
     )
     logger.info("✅ setup_panels(): ЗАВЕРШЕНО")
@@ -1768,6 +1935,7 @@ async def on_ready():
     bot.add_view(TicketCreateButton())
     bot.add_view(AdminPanelView())
     bot.add_view(OrderCloseView(0, 0, None, None))
+    bot.add_view(ReferralPromoView())
     setup_embed_builder(bot)
 
     asyncio.create_task(_safe_task(auto_cleanup_tickets(), "auto_cleanup_tickets"))
